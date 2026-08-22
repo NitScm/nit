@@ -1,7 +1,7 @@
 # Contributor Covenant Code of Conduct
 
 This Code of Conduct is identical across `nit`, `nit-console` and
-`nit-docs`. It is one community; the boundary between the repositories is not a
+`docs`. It is one community; the boundary between the repositories is not a
 boundary between standards of behaviour.
 
 ## Our Pledge

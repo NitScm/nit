@@ -5,10 +5,10 @@ three developers with deliberately different access, and a validation dataset
 that proves the rules do what they claim.
 
 The walkthrough — machine account, host keys, branch protection, seeding the
-repository, running the workers, and the end-to-end checks — is the
-**Worked example: GitHub over SSH** page of the documentation site
-(`nit-docs/src/content/docs/guides/example-github-ssh.md`). These are the files
-it uses; copy the directory and edit the two or three values that are yours.
+repository, running the workers, and the end-to-end checks — is
+[**Worked example: GitHub over SSH**](https://nitscm.github.io/docs/guides/example-github-ssh/)
+on the documentation site. These are the files it uses; copy the directory and
+edit the two or three values that are yours.
 
 | | |
 | --- | --- |

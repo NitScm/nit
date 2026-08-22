@@ -136,7 +136,7 @@ The engineering documents in [`docs/`](docs) are the authority on internals:
 `ARCHITECTURE.md`, `PROTOCOL.md`, `POLICY.md`, `CONFIGURATION.md`,
 `VALIDATION.md`, `SCALING.md`, `DECISIONS.md`.
 
-User-facing behaviour changes also go in `nit-docs/`, which has reference pages
+User-facing behaviour changes also go in the `docs` repository, which has reference pages
 for every flag, setting and error code. A documented flag that no longer exists
 is a bug report waiting to happen.
 

@@ -80,7 +80,7 @@ a patch:
 its machine account is the *only* writer and that the repository is private. A
 deployment where developers keep write access, where a CI job holds
 `contents: write`, or where an admin can bypass branch protection is
-misconfigured. See `nit-docs` → *Connecting a forge*.
+misconfigured. See [*Connecting a forge*](https://nitscm.github.io/docs/guides/forges/).
 
 **A public repository is readable.** nit hides files inside a repository. It
 cannot hide a public one.
@@ -114,7 +114,7 @@ version table at 1.0.
 
 ## Deploying nit safely
 
-The checklist in `nit-docs` → *Going to production* is the short version. The
+The checklist in [*Going to production*](https://nitscm.github.io/docs/guides/production/) is the short version. The
 three that matter most:
 
 1. nit's machine account is the only account able to push the protected branches.
