@@ -47,6 +47,18 @@ func TestMigrateIsIdempotent(t *testing.T) {
 	}
 	defer s.Close()
 
+	// Start from an empty schema. The first assertion below is that a fresh
+	// database receives every migration, which is only true once — without this
+	// the test passes on a new database and fails on every later run, which is
+	// the same as not being runnable.
+	//
+	// Dropping is safe here and only here: NIT_TEST_POSTGRES_MIGRATE names a
+	// database dedicated to this test, separate from NIT_TEST_POSTGRES, exactly
+	// so that it can be emptied.
+	if _, err := s.Pool().Exec(ctx, `DROP SCHEMA public CASCADE; CREATE SCHEMA public`); err != nil {
+		t.Fatalf("reset schema: %v", err)
+	}
+
 	loaded, err := postgres.LoadMigrations(migrations.FS)
 	if err != nil {
 		t.Fatalf("LoadMigrations: %v", err)
