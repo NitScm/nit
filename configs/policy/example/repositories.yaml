@@ -1,0 +1,9 @@
+# Repositories placed under nit control.
+#
+# "remote" is the upstream URL on the forge; nit is the only writer of that
+# remote. "forge" selects the driver used to talk to the hosting provider.
+
+- id: backend-api
+  remote: https://github.com/example/backend-api.git
+  forge: github
+  default_branch: main

@@ -1,0 +1,103 @@
+# nit with a self-hosted Gitea, in the same stack.
+#
+#   docker compose -f compose.base.yaml -f compose.gitea.yaml up -d
+#
+# The forge runs here, so nit reaches it at http://gitea:3000 over the compose
+# network and it never has to be exposed to reach it. The repository remote in
+# your policy bundle uses that internal name:
+#
+#   - id: backend-api
+#     remote: http://gitea:3000/acme/backend-api.git
+#     forge: gitea
+#     default_branch: main
+#
+# Gitea shares the PostgreSQL instance but gets its own database, created by the
+# gitea-db service below. For anything beyond a single host, give Gitea its own
+# PostgreSQL: nit's availability should not depend on the forge's load, or the
+# reverse.
+
+services:
+  # Prepares Gitea's database: creates it, and creates the `gitea` schema an
+  # earlier version of this file configured Gitea to use.
+  #
+  # Both are idempotent. Neither is an /docker-entrypoint-initdb.d script,
+  # because those run only when the PostgreSQL data directory is empty — adding
+  # Gitea to an existing deployment would otherwise mean losing the volume. And
+  # Gitea persists its configuration into app.ini on first start, so a
+  # deployment created before this change still asks for that schema.
+  gitea-db:
+    image: postgres:17-alpine
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      # Passed in rather than interpolated into the command, so the password
+      # never appears in the container's argv where `ps` can read it.
+      PGPASSWORD: ${POSTGRES_PASSWORD:?}
+      POSTGRES_USER: ${POSTGRES_USER:?}
+      POSTGRES_DB: ${POSTGRES_DB:?}
+      GITEA_DB: ${GITEA_DB:-gitea}
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -e
+        psql -h postgres -U "$$POSTGRES_USER" -d "$$POSTGRES_DB" \
+             -tAc "SELECT 1 FROM pg_database WHERE datname='$$GITEA_DB'" \
+          | grep -q 1 || psql -h postgres -U "$$POSTGRES_USER" -d "$$POSTGRES_DB" \
+             -c "CREATE DATABASE \"$$GITEA_DB\""
+        psql -h postgres -U "$$POSTGRES_USER" -d "$$GITEA_DB" \
+             -c 'CREATE SCHEMA IF NOT EXISTS gitea'
+
+  gitea:
+    image: gitea/gitea:1.23
+    restart: unless-stopped
+    environment:
+      USER_UID: 1000
+      USER_GID: 1000
+      GITEA__database__DB_TYPE: postgres
+      GITEA__database__HOST: postgres:5432
+      # Its own database, created by ../postgres-init.d/10-gitea.sql. Gitea does
+      # not create the schema it is pointed at, so a shared database with a
+      # `gitea` schema fails at start-up with `schema "gitea" does not exist`.
+      GITEA__database__NAME: ${GITEA_DB:-gitea}
+      GITEA__database__USER: ${POSTGRES_USER:?}
+      GITEA__database__PASSWD: ${POSTGRES_PASSWORD:?}
+      # Explicitly empty, to clear the value an earlier version of this file
+      # wrote into app.ini: Gitea persists its configuration on first start and
+      # never removes a key just because the environment stopped setting it.
+      GITEA__database__SCHEMA: ""
+      GITEA__server__ROOT_URL: ${GITEA_ROOT_URL:?}
+      GITEA__server__DOMAIN: ${GITEA_DOMAIN:?}
+      GITEA__repository__DEFAULT_BRANCH: main
+      # nit is the authorization layer. A forge that lets developers push
+      # directly is a way around it, so registration is closed and the
+      # repositories nit owns should be writable only by nit's machine account.
+      GITEA__service__DISABLE_REGISTRATION: "true"
+    volumes:
+      - gitea:/data
+    depends_on:
+      gitea-db:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:3000/api/v1/version || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+    ports:
+      - "${GITEA_BIND:-0.0.0.0}:${GITEA_PORT:-3000}:3000"
+      - "${GITEA_BIND:-0.0.0.0}:${GITEA_SSH_PORT:-2222}:22"
+
+  worker:
+    depends_on:
+      gitea:
+        condition: service_healthy
+    environment:
+      # A Gitea access token with `write:repository`, belonging to the machine
+      # account nit pushes as. Create it under
+      # Settings → Applications → Generate Token.
+      NIT_FORGE_TOKEN: ${NIT_FORGE_TOKEN:?}
+
+volumes:
+  gitea:

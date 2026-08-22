@@ -1,0 +1,130 @@
+# nit, forge-agnostic.
+#
+# This file is never used alone. Combine it with the overlay for your forge:
+#
+#   docker compose -f compose.base.yaml -f compose.gitea.yaml  up -d
+#   docker compose -f compose.base.yaml -f compose.github.yaml up -d
+#   docker compose -f compose.base.yaml -f compose.gitlab.yaml up -d
+#
+# What differs between them is small — the credential and whether the forge is
+# part of the stack — which is exactly why it is a small overlay rather than
+# three copies of this file that will drift apart.
+#
+# Settings come from .env; copy .env.example and fill it in.
+
+name: nit
+
+x-nit-common: &nit-common
+  image: ${NIT_IMAGE:-ghcr.io/nitscm/nit:latest}
+  restart: unless-stopped
+  environment: &nit-env
+    NIT_DATABASE_URL: postgres://${POSTGRES_USER:?}:${POSTGRES_PASSWORD:?}@postgres:5432/${POSTGRES_DB:?}?sslmode=${POSTGRES_SSLMODE:-disable}
+    NIT_POLICY_DIR: /etc/nit/policy
+    NIT_BLOB_DIR: /var/lib/nit/blobs
+    NIT_WORK_DIR: /var/lib/nit/work
+    NIT_LOG_LEVEL: ${NIT_LOG_LEVEL:-info}
+    NIT_MAX_PATCH_BYTES: ${NIT_MAX_PATCH_BYTES:-104857600}
+    # Has to survive a clone of your largest repository. Too short and a big
+    # repository loses its task mid-flight; too long and a crashed worker blocks
+    # its branch for that long.
+    NIT_LEASE_DURATION: ${NIT_LEASE_DURATION:-60s}
+  volumes: &nit-volumes
+    # Read-only: nit never writes to the bundle. Point this at a checkout of
+    # your policy repository, updated by your deployment.
+    - ${NIT_POLICY_DIR:?}:/etc/nit/policy:ro
+    - ${NIT_SYNC_KEY_FILE:?}:/run/secrets/sync-key:ro
+    # Shared between the control plane and every worker: nitd writes the
+    # authorized patch here and a worker reads it back. Separate volumes produce
+    # `missing_patch` on every push — the most common way to get this wrong.
+    - blobs:/var/lib/nit/blobs
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?}
+      POSTGRES_DB: ${POSTGRES_DB:?}
+    volumes:
+      - postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB} -h 127.0.0.1"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  # Applies the schema, then exits.
+  #
+  # A separate step rather than something nitd does on boot: a schema change is
+  # a deployment decision, and a server that migrates on start-up will happily
+  # run half-rolled-out DDL from several replicas at once.
+  migrate:
+    <<: *nit-common
+    restart: "no"
+    command: ["nitctl", "migrate"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      <<: *nit-env
+
+  nitd:
+    <<: *nit-common
+    command: ["nitd"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      <<: *nit-env
+      NIT_ADDR: "0.0.0.0:8080"
+      NIT_SYNC_KEY_FILE: /run/secrets/sync-key
+      # Groups allowed to read the operations API. Empty means nobody.
+      NIT_ADMIN_GROUPS: ${NIT_ADMIN_GROUPS:-}
+      # Only needed when the console is served from another origin. Serve it
+      # from the same host and leave this empty.
+      NIT_CORS_ORIGINS: ${NIT_CORS_ORIGINS:-}
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/healthz || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+    ports:
+      - "${NIT_BIND:-127.0.0.1}:${NIT_PORT:-8080}:8080"
+
+  worker:
+    <<: *nit-common
+    command: ["nit-worker"]
+    depends_on:
+      nitd:
+        condition: service_healthy
+    environment:
+      <<: *nit-env
+      NIT_SYNC_KEY_FILE: /run/secrets/sync-key
+      # NIT_FORGE_TOKEN comes from the forge overlay: it is the one setting that
+      # genuinely differs between GitHub, GitLab and a self-hosted Gitea.
+    volumes:
+      - ${NIT_POLICY_DIR:?}:/etc/nit/policy:ro
+      - ${NIT_SYNC_KEY_FILE:?}:/run/secrets/sync-key:ro
+      - blobs:/var/lib/nit/blobs
+      # Scratch space for clones, local to this worker: it needs neither sharing
+      # nor backup. Size it for your largest repository times the concurrency.
+      - work:/var/lib/nit/work
+    # Scale with `docker compose up -d --scale worker=4`. Pushes still serialize
+    # per branch — that is the queue's job — so more workers buy throughput
+    # across branches and repositories, never within one.
+
+  console:
+    image: ${NIT_CONSOLE_IMAGE:-ghcr.io/nitscm/nit-console:latest}
+    restart: unless-stopped
+    depends_on:
+      nitd:
+        condition: service_healthy
+    ports:
+      - "${NIT_CONSOLE_BIND:-127.0.0.1}:${NIT_CONSOLE_PORT:-8090}:80"
+    profiles: [console]
+
+volumes:
+  postgres:
+  blobs:
+  work:

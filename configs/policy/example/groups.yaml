@@ -1,0 +1,26 @@
+# Groups of users.
+#
+# "includes" absorbs another group: every member of an included group is also a
+# member of the including one. Inclusion cycles are rejected at load time.
+
+- id: interns
+  description: Interns, supervised access
+  members:
+    - carol
+
+- id: backend
+  description: Backend engineers
+  members:
+    - alice
+  includes:
+    - interns
+
+- id: frontend
+  description: Frontend engineers
+  members:
+    - bob
+
+- id: platform
+  description: Platform team, owns CI and secrets
+  members:
+    - alice

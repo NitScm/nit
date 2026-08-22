@@ -1,0 +1,13 @@
+# The development accounts. Their access is deliberately different so that
+# switching between them shows the product doing something.
+
+- id: alice
+  email: alice@example.com
+  forge_logins:
+    gitea: nit-admin
+
+- id: bob
+  email: bob@example.com
+
+- id: carol
+  email: carol@example.com

@@ -1,0 +1,59 @@
+# Worker configuration for the GitHub + SSH example.
+#
+# A worker reads the same configuration as nitd — the same file, the same
+# variables. Two processes that disagree about the database, the bundle or the
+# signing key fail in ways that are very hard to diagnose.
+#
+# For an ssh:// remote the forge driver leaves the URL untouched and git resolves
+# the credential from its own configuration. git.ssh_command below is how that
+# configuration is delivered: a passthrough, not a key manager.
+
+database:
+  url_file: /run/secrets/nit-database-url
+
+policy:
+  dir: /etc/nit/policy
+  reload: 30s
+
+storage:
+  # Shared with nitd. nitd writes the authorized patch here and the worker reads
+  # it back; two separate directories produce missing_patch on every push.
+  blob_dir: /var/lib/nit/blobs
+
+  # Scratch. Size it for the largest repository times the concurrency.
+  work_dir: /var/lib/nit/work
+
+security:
+  sync_key_file: /run/secrets/nit-sync-key
+
+queue:
+  # Has to survive a clone of the largest repository: a lease that lapses
+  # mid-clone is handed to another worker, and the first is cut off by its own
+  # fencing check. The symptom is tasks that retry forever without failing.
+  lease_duration: 5m
+  max_attempts: 3
+
+# forge.token stays unset. It is the HTTPS credential; over SSH the key does
+# this job, and an unused token is one more secret to rotate.
+
+git:
+  # Handed to every git invocation as GIT_SSH_COMMAND. There is deliberately no
+  # ssh_key setting: a key path would cover the simplest case and leave agents,
+  # ProxyJump, per-host keys and non-standard ports to git anyway.
+  #
+  # -i with IdentitiesOnly stops ssh offering every key it can find — with an
+  #    agent on the host the wrong one goes first, and GitHub then answers as
+  #    whatever account that key belongs to.
+  # The known_hosts pair is what makes the host verifiable; without it a worker
+  #    pushes the repository to whoever answers.
+  # BatchMode turns a passphrase prompt into an error rather than a worker that
+  #    hangs holding its branch until the lease expires.
+  ssh_command: >-
+    ssh -i /run/secrets/nit-ssh-key
+    -o IdentitiesOnly=yes
+    -o UserKnownHostsFile=/etc/nit/ssh/known_hosts
+    -o StrictHostKeyChecking=yes
+    -o BatchMode=yes
+
+log:
+  level: info

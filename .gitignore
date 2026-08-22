@@ -1,0 +1,40 @@
+# Build output
+/bin/
+*.test
+
+# Coverage
+coverage.out
+*.out
+coverage.html
+
+# Default storage.blob_dir and storage.work_dir when nothing is configured,
+# plus worker scratch. Patches in flight and clones: never committed, never
+# backed up.
+/var/
+tmp/
+work/
+
+# Local configuration and credentials. nit refuses to read a file that holds an
+# inline secret unless it is mode 600 — do not let one reach a commit either.
+.env
+*.local.yaml
+/nit.yaml
+/nit.yml
+*.key
+
+# The worked example's secrets: SSH key, signing key, database URL. The
+# example's own nit.yaml is committed — it holds paths, not secrets.
+/examples/*/secrets/
+/examples/*/known_hosts
+
+# Editors and OS
+.idea/
+.vscode/
+.DS_Store
+
+# Agentic scratch: temporary plans, experiments, progress notes.
+# See AGENTS.md.
+.agents/work/
+
+# Local maintenance scripts kept out of history.
+git-rewrite-identity.sh

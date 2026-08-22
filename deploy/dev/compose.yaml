@@ -1,0 +1,287 @@
+# A complete nit environment for development and user testing.
+#
+#   docker compose up -d
+#   docker compose logs -f bootstrap      # prints the tokens to sign in with
+#
+# Everything is here: PostgreSQL, a Gitea acting as the forge, the control
+# plane, a worker, the API description behind Swagger UI, and the web console.
+# Nothing outside this file is needed and nothing survives `down -v`.
+#
+# The secrets below are fixed and public on purpose. This is a development
+# environment; using generated ones would mean the printed instructions could
+# not include them, and pretending a compose file is a secret store teaches the
+# wrong habit. Never copy this file to a real deployment — see ../production.
+
+name: nit-dev
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: nit
+      POSTGRES_PASSWORD: nit
+      POSTGRES_DB: nit
+    volumes:
+      - postgres:/var/lib/postgresql/data
+    healthcheck:
+      # pg_isready alone returns success while the server is still starting up
+      # inside the entrypoint's temporary instance, which is how a dependent
+      # container ends up connecting to a database that is about to restart.
+      test: ["CMD-SHELL", "pg_isready -U nit -d nit -h 127.0.0.1"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    ports:
+      - "${NIT_DEV_POSTGRES_PORT:-15432}:5432"
+
+  # --- the forge ------------------------------------------------------------
+
+  # Prepares Gitea's database.
+  #
+  # Two things, both idempotent:
+  #
+  #   1. Creates the database. Not an /docker-entrypoint-initdb.d script: those
+  #      run only when the PostgreSQL data directory is empty, so anyone whose
+  #      volume predates this file would have no way forward but `down -v`.
+  #
+  #   2. Creates a `gitea` schema inside it. An earlier version of this file set
+  #      GITEA__database__SCHEMA, and Gitea *persists* its configuration into
+  #      /data/gitea/conf/app.ini on first start — removing the environment
+  #      variable does not remove the line it wrote. A volume created back then
+  #      still asks for that schema, and would fail forever without it.
+  #
+  # On a fresh volume the schema is simply unused, which costs nothing and is
+  # cheaper than an error nobody can diagnose from the outside.
+  gitea-db:
+    image: postgres:17-alpine
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGPASSWORD: nit
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -e
+        psql -h postgres -U nit -d nit -tAc "SELECT 1 FROM pg_database WHERE datname='gitea'" \
+          | grep -q 1 || psql -h postgres -U nit -d nit -c 'CREATE DATABASE gitea'
+        psql -h postgres -U nit -d gitea -c 'CREATE SCHEMA IF NOT EXISTS gitea'
+    restart: "no"
+
+  gitea:
+    image: gitea/gitea:1.23
+    environment:
+      USER_UID: 1000
+      USER_GID: 1000
+      GITEA__database__DB_TYPE: postgres
+      GITEA__database__HOST: postgres:5432
+      # Its own database, created by the gitea-db service.
+      #
+      # Not a schema inside nit's: Gitea does not create the schema it is
+      # pointed at — it expects one to exist — and the two applications have
+      # confusingly similar table names (nit has `users`, `repositories`,
+      # `tasks`; Gitea has `user`, `repository`, `task`).
+      GITEA__database__NAME: gitea
+      # Explicitly empty, to clear the value an earlier version of this file
+      # wrote into app.ini. Gitea persists its configuration on first start and
+      # never removes a key just because the environment stopped setting it.
+      GITEA__database__SCHEMA: ""
+      GITEA__database__USER: nit
+      GITEA__database__PASSWD: nit
+      # Skip the web installer: an environment that needs a human to click
+      # through a wizard is not one you can bring up in CI.
+      GITEA__security__INSTALL_LOCK: "true"
+      GITEA__server__ROOT_URL: "http://localhost:${NIT_DEV_GITEA_PORT:-3000}/"
+      GITEA__server__DOMAIN: gitea
+      GITEA__service__DISABLE_REGISTRATION: "true"
+      GITEA__repository__DEFAULT_BRANCH: main
+      GITEA__log__LEVEL: warn
+    volumes:
+      - gitea:/data
+    depends_on:
+      gitea-db:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:3000/api/v1/version || exit 1"]
+      interval: 3s
+      timeout: 3s
+      retries: 40
+    ports:
+      - "${NIT_DEV_GITEA_PORT:-3000}:3000"
+
+  # --- one-shot setup -------------------------------------------------------
+
+  # Makes the shared volume writable by the nit user.
+  #
+  # A fresh named volume mounted at /var/lib/nit inherits the image's ownership,
+  # so this is only needed for a volume created by an earlier version of this
+  # file — which mounted it at /shared, a path the image does not contain, so
+  # Docker created it root-owned and every container failed with
+  # `mkdir: can't create directory: Permission denied`.
+  #
+  # Idempotent, and cheap enough to keep rather than tell people to destroy
+  # their volume.
+  shared-init:
+    image: alpine:3.21
+    user: root
+    volumes:
+      - shared:/var/lib/nit
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        mkdir -p /var/lib/nit/blobs /var/lib/nit/work /var/lib/nit/policy
+        chown -R 10001:10001 /var/lib/nit
+    restart: "no"
+
+  # Creates the Gitea account and repository, seeds it with a sample tree,
+  # writes the policy bundle, applies the schema and issues nit tokens.
+  #
+  # It is idempotent: run it again after `docker compose up` and it converges
+  # rather than failing on what already exists.
+  bootstrap:
+    build:
+      context: ../..
+      dockerfile: deploy/Dockerfile
+    image: nit:dev
+    depends_on:
+      shared-init:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      gitea:
+        condition: service_healthy
+    environment:
+      NIT_DATABASE_URL: postgres://nit:nit@postgres:5432/nit?sslmode=disable
+      NIT_POLICY_DIR: /var/lib/nit/policy
+      NIT_SYNC_KEY: development-only-signing-key-32-bytes
+      GITEA_URL: http://gitea:3000
+      GITEA_ADMIN_USER: nit-admin
+      GITEA_ADMIN_PASSWORD: nit-admin-password
+      GITEA_ORG_REPO: nit-admin/backend-api
+    volumes:
+      - shared:/var/lib/nit
+      - ./bootstrap.sh:/bootstrap.sh:ro
+      - ./policy:/policy-template:ro
+    entrypoint: ["/bin/sh", "/bootstrap.sh"]
+    restart: "no"
+
+  # Gitea has no way to create its first administrator from the environment, so
+  # the CLI does it — in the Gitea image, against the same database.
+  gitea-admin:
+    image: gitea/gitea:1.23
+    user: "1000:1000"
+    depends_on:
+      gitea:
+        condition: service_healthy
+    environment:
+      GITEA_WORK_DIR: /data/gitea
+    volumes:
+      - gitea:/data
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        gitea admin user create \
+          --username nit-admin --password nit-admin-password \
+          --email nit-admin@example.com --admin --must-change-password=false \
+          2>&1 | grep -v 'already exists' || true
+    restart: "no"
+
+  # --- nit ------------------------------------------------------------------
+
+  nitd:
+    image: nit:dev
+    build:
+      context: ../..
+      dockerfile: deploy/Dockerfile
+    command: ["nitd"]
+    depends_on:
+      bootstrap:
+        condition: service_completed_successfully
+    environment:
+      NIT_ADDR: "0.0.0.0:8080"
+      NIT_DATABASE_URL: postgres://nit:nit@postgres:5432/nit?sslmode=disable
+      NIT_POLICY_DIR: /var/lib/nit/policy
+      NIT_BLOB_DIR: /var/lib/nit/blobs
+      NIT_SYNC_KEY: development-only-signing-key-32-bytes
+      NIT_ADMIN_GROUPS: platform
+      # The console and Swagger UI run on their own ports, so they are separate
+      # origins and need naming. In production both are served from the same
+      # host as the API and this is empty.
+      NIT_CORS_ORIGINS: "http://localhost:${NIT_DEV_CONSOLE_PORT:-4200},http://localhost:${NIT_DEV_SWAGGER_PORT:-8081}"
+      NIT_LOG_LEVEL: "${NIT_DEV_LOG_LEVEL:-info}"
+    volumes:
+      - shared:/var/lib/nit
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/healthz || exit 1"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    ports:
+      - "${NIT_DEV_API_PORT:-8080}:8080"
+
+  worker:
+    image: nit:dev
+    build:
+      context: ../..
+      dockerfile: deploy/Dockerfile
+    # The forge token is written by the bootstrap; reading it at start-up keeps
+    # it out of this file and out of `docker inspect`.
+    command:
+      - /bin/sh
+      - -c
+      - 'NIT_FORGE_TOKEN="$$(cat /var/lib/nit/forge-token)" exec nit-worker -name worker'
+    depends_on:
+      nitd:
+        condition: service_healthy
+    environment:
+      NIT_DATABASE_URL: postgres://nit:nit@postgres:5432/nit?sslmode=disable
+      NIT_POLICY_DIR: /var/lib/nit/policy
+      NIT_BLOB_DIR: /var/lib/nit/blobs
+      NIT_WORK_DIR: /var/lib/nit/work
+      NIT_SYNC_KEY: development-only-signing-key-32-bytes
+      NIT_LOG_LEVEL: "${NIT_DEV_LOG_LEVEL:-info}"
+      # A development clone is small; a short lease surfaces a stuck worker fast.
+      NIT_LEASE_DURATION: 60s
+    volumes:
+      - shared:/var/lib/nit
+
+  # --- the things you look at ----------------------------------------------
+
+  console:
+    build:
+      context: ../../../nit-console
+    image: nit-console:dev
+    environment:
+      # nginx proxies /v1 and /healthz here, so the console and the API share an
+      # origin and the sign-in screen's Server field can be left empty.
+      NIT_API_URL: http://nitd:8080
+    depends_on:
+      nitd:
+        condition: service_healthy
+    ports:
+      - "${NIT_DEV_CONSOLE_PORT:-4200}:80"
+
+  swagger:
+    image: swaggerapi/swagger-ui:latest
+    environment:
+      # Read from the running server, not from a copy: what you see is what that
+      # binary actually serves.
+      URLS: '[{"url":"http://localhost:${NIT_DEV_API_PORT:-8080}/openapi.yaml","name":"nit API"}]'
+      DEEP_LINKING: "true"
+    depends_on:
+      nitd:
+        condition: service_healthy
+    ports:
+      - "${NIT_DEV_SWAGGER_PORT:-8081}:8080"
+
+volumes:
+  postgres:
+  gitea:
+  # Shared between the control plane and the worker: nitd writes the authorized
+  # patch here and the worker reads it back. Two separate volumes would produce
+  # `missing_patch` on every push, which is the most common way to get this
+  # wrong.
+  shared:

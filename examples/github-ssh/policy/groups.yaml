@@ -1,0 +1,15 @@
+- id: engineering
+  description: Everyone who writes code here
+  members: [maya, raj, nadia]
+
+- id: api
+  description: Owns the HTTP surface
+  members: [maya]
+
+- id: ledger
+  description: Owns double-entry posting and reconciliation
+  members: [raj]
+
+- id: platform
+  description: Owns deployment, CI and payment credentials
+  members: [nadia]

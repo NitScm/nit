@@ -1,0 +1,58 @@
+# nit against GitLab — and the template for any other forge.
+#
+#   docker compose -f compose.base.yaml -f compose.gitlab.yaml up -d
+#
+# GitLab is external here, as it usually is; running one in the same compose
+# stack is possible but it is a heavy service that deserves its own deployment.
+#
+# The repository remote in your policy bundle is the ordinary clone URL:
+#
+#   - id: backend-api
+#     remote: https://gitlab.com/acme/backend-api.git
+#     forge: gitlab
+#     default_branch: main
+#
+# ── Adapting this to a forge nit has never heard of ───────────────────────────
+#
+# nit's git operations are plain clone, fetch and push, so **any remote git can
+# already talk to works today** — Bitbucket, Azure DevOps, Gerrit, a bare
+# repository over SSH. The `forge:` field in the bundle selects a driver, and an
+# unrecognized value falls back to the generic one, which:
+#
+#   - injects NIT_FORGE_TOKEN into an https:// remote as HTTP basic auth;
+#   - leaves ssh:// and file:// remotes alone, so git resolves the credential
+#     from its own configuration.
+#
+# A specific driver only becomes worth writing for the shortcuts: reading a
+# branch tip without cloning, or opening a merge request. Neither is needed for
+# push and pull to work.
+#
+# So: copy this file, change the comment, and set the token. That is the whole
+# adaptation.
+#
+# ── The point worth pausing on ────────────────────────────────────────────────
+#
+# nit is the only writer of these repositories. On GitLab that means:
+#
+#   1. The machine account has Maintainer (or Developer with push rights) on the
+#      project; everyone else has at most Reporter.
+#   2. Protected branches list only that account as allowed to push.
+#   3. The project is private.
+#
+# Otherwise a developer clones the project directly and nit has authorized
+# nothing.
+
+services:
+  worker:
+    environment:
+      # A project or group access token with `write_repository`, or a deploy
+      # token. Not a person's token: it should cover exactly the repositories in
+      # the bundle, and it should not stop working when someone leaves.
+      NIT_FORGE_TOKEN: ${NIT_FORGE_TOKEN:?}
+
+      # SSH remotes instead of a token: mount a key and let git use it. The
+      # generic driver leaves ssh:// remotes untouched precisely so this works.
+      #
+      # volumes:
+      #   - ${NIT_SSH_KEY_FILE}:/var/lib/nit/.ssh/id_ed25519:ro
+      #   - ${NIT_SSH_KNOWN_HOSTS}:/var/lib/nit/.ssh/known_hosts:ro

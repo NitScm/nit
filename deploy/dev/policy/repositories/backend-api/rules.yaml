@@ -1,0 +1,69 @@
+# The rules this environment demonstrates.
+#
+# Evaluation is order-independent: every matching rule is considered, deny
+# always wins over allow, and anything unmatched is denied.
+
+# --- everyone reads the code ------------------------------------------------
+
+- id: everyone-reads-the-code
+  subject: { type: any }
+  paths: [src/, docs/]
+  actions: [read]
+  effect: allow
+
+# --- teams own their subtrees -----------------------------------------------
+
+- id: backend-owns-server
+  subject: { type: group, id: backend }
+  paths: [src/server/, src/shared/, docs/]
+  actions: [read, write, create, delete]
+  effect: allow
+  description: Backend engineers own src/server and src/shared.
+
+- id: frontend-owns-ui
+  subject: { type: group, id: frontend }
+  paths: [src/ui/, src/shared/, docs/]
+  actions: [read, write, create, delete]
+  effect: allow
+  description: Frontend engineers own src/ui and src/shared.
+
+# --- confidential areas -----------------------------------------------------
+#
+# Because the deny covers `read`, these files never appear in anyone else's
+# workspace at all. The exemption is written with `except`, not with a competing
+# allow rule: deny always wins, so an allow for the platform team would be
+# swallowed by this deny.
+
+- id: secrets-are-platform-only
+  subject: { type: any }
+  except:
+    - { type: group, id: platform }
+  paths: [secrets/, infra/production/]
+  actions: [read, write, create, delete, admin]
+  effect: deny
+  description: >-
+    Production secrets and infrastructure are owned by the platform team.
+    Open a request in #platform to have a change applied.
+
+# --- the platform team ------------------------------------------------------
+#
+# Including `admin`, which is what the guards on CI definitions,
+# .gitattributes, .gitmodules, symlinks and submodules require.
+
+- id: platform-owns-everything
+  subject: { type: group, id: platform }
+  paths: ["**"]
+  actions: [read, write, create, delete, admin]
+  effect: allow
+
+# --- branch protection ------------------------------------------------------
+
+- id: no-direct-push-to-release
+  subject: { type: any }
+  except:
+    - { type: group, id: platform }
+  paths: ["**"]
+  refs: [refs/heads/release/**]
+  actions: [write, create, delete]
+  effect: deny
+  description: Release branches are updated by the platform team.

@@ -1,0 +1,7 @@
+# __REMOTE__ is substituted by bootstrap.sh with the Gitea repository this
+# environment creates.
+
+- id: backend-api
+  remote: __REMOTE__
+  forge: generic
+  default_branch: main

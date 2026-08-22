@@ -1,0 +1,11 @@
+- id: backend
+  description: Backend engineers
+  members: [bob]
+
+- id: frontend
+  description: Frontend engineers
+  members: [carol]
+
+- id: platform
+  description: Platform team — owns secrets, infrastructure and CI
+  members: [alice]

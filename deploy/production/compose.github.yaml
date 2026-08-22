@@ -1,0 +1,42 @@
+# nit against GitHub — Cloud or Enterprise.
+#
+#   docker compose -f compose.base.yaml -f compose.github.yaml up -d
+#
+# The forge is external, so this overlay adds no service: it supplies the
+# credential and nothing else. That is the whole difference, and it is why the
+# base file is worth sharing.
+#
+# The repository remote in your policy bundle is the ordinary clone URL:
+#
+#   - id: backend-api
+#     remote: https://github.com/acme/backend-api.git
+#     forge: github
+#     default_branch: main
+#
+# For GitHub Enterprise, use your own host in the remote. Nothing else changes.
+#
+# ── The point worth pausing on ────────────────────────────────────────────────
+#
+# nit is the *only* writer of these repositories. Its guarantees end the moment
+# a developer can push to the same branch directly, so on GitHub you must also:
+#
+#   1. Give nit's machine account write access, and remove everyone else's.
+#   2. Add a branch protection rule on the branches nit manages, with the
+#      machine account as the only permitted pusher.
+#   3. Keep the repository private. nit hides files *inside* a repository; it
+#      cannot hide a public one.
+#
+# Without those, a developer who wants a file they may not read can simply clone
+# it from GitHub, and nit has authorized nothing.
+
+services:
+  worker:
+    environment:
+      # A fine-grained personal access token, a GitHub App installation token,
+      # or a machine user's classic token with `repo` scope.
+      #
+      # It is a machine identity, not a person's: it should have write access to
+      # exactly the repositories in the bundle and to nothing else. A person's
+      # token gives nit their whole account, and stops working the day they
+      # leave.
+      NIT_FORGE_TOKEN: ${NIT_FORGE_TOKEN:?}

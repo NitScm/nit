@@ -1,0 +1,14 @@
+- id: maya
+  email: maya@acme.example
+  forge_logins:
+    github: maya-acme
+
+- id: raj
+  email: raj@acme.example
+  forge_logins:
+    github: raj-acme
+
+- id: nadia
+  email: nadia@acme.example
+  forge_logins:
+    github: nadia-acme

@@ -1,0 +1,41 @@
+# Two workers pushing to github.com over SSH.
+#
+# Overlay on deploy/production/compose.base.yaml:
+#
+#   docker compose -f ../../deploy/production/compose.base.yaml \
+#                  -f compose.yaml up -d
+#
+# Everything SSH-specific lives in nit.yaml, under git.ssh_command. This file
+# only has to deliver the files that command names.
+
+services:
+  worker:
+    volumes:
+      - ./nit.yaml:/etc/nit/nit.yaml:ro
+      - ./policy:/etc/nit/policy:ro
+      - ./known_hosts:/etc/nit/ssh/known_hosts:ro
+
+    secrets:
+      - nit-ssh-key
+      - nit-database-url
+      - nit-sync-key
+
+    # Pushes serialize per branch whatever this says — that is the queue's job.
+    # More workers buy throughput across branches and repositories.
+    deploy:
+      replicas: 2
+
+  nitd:
+    volumes:
+      - ./nit.yaml:/etc/nit/nit.yaml:ro
+      - ./policy:/etc/nit/policy:ro
+
+secrets:
+  # Mode 0400: OpenSSH refuses a private key readable by anyone else, and the
+  # failure is a permissions error that reads nothing like an SSH problem.
+  nit-ssh-key:
+    file: ./secrets/id_ed25519
+  nit-database-url:
+    file: ./secrets/database-url
+  nit-sync-key:
+    file: ./secrets/sync.key

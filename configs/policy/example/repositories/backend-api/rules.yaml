@@ -1,0 +1,152 @@
+# Rules for the backend-api repository.
+#
+# Evaluation is order-independent: every matching rule is considered, deny
+# always wins over allow, and anything unmatched is denied. Rules may therefore
+# be reordered or regrouped freely without changing behaviour.
+#
+# Path syntax:
+#   src/          a subtree: the directory entry itself and everything under it
+#   **/*.env      a glob, for files scattered across the tree
+#   **            everything
+#
+# Actions: read, write, create, delete, admin.
+# An allow rule that grants write, create or delete must also grant read: a
+# subject writing a file it cannot see would overwrite content blind, and could
+# not produce a diff against a file absent from its workspace.
+
+# --- Baseline ---------------------------------------------------------------
+
+- id: everyone-reads-the-code
+  subject:
+    type: any
+  paths:
+    - src/
+    - docs/
+    - README.md
+  actions: [read]
+  effect: allow
+
+# --- Team grants ------------------------------------------------------------
+
+- id: backend-owns-server-code
+  subject:
+    type: group
+    id: backend
+  paths:
+    - src/server/
+    - src/shared/
+  actions: [read, write, create, delete]
+  effect: allow
+  description: Backend engineers own src/server and src/shared.
+
+- id: frontend-owns-ui-code
+  subject:
+    type: group
+    id: frontend
+  paths:
+    - src/ui/
+    - src/shared/
+  actions: [read, write, create, delete]
+  effect: allow
+  description: Frontend engineers own src/ui and src/shared.
+
+- id: everyone-writes-docs
+  subject:
+    type: any
+  paths:
+    - docs/
+    - README.md
+  actions: [read, write, create]
+  effect: allow
+
+# --- Confidential areas -----------------------------------------------------
+
+# A subtree nobody outside the platform team may even read. Because the deny
+# covers read, these files never appear in anyone else's workspace at all.
+#
+# The exemption is expressed with "except", not with a competing allow rule:
+# deny always wins, so an allow for the platform team would be swallowed by this
+# deny. Listing every non-exempt group instead would fail open the day a new
+# group is created.
+- id: secrets-are-platform-only
+  subject:
+    type: any
+  except:
+    - type: group
+      id: platform
+  paths:
+    - secrets/
+    - infra/production/
+  actions: [read, write, create, delete, admin]
+  effect: deny
+  description: >-
+    Production secrets and infrastructure are owned by the platform team.
+    Open a request in #platform to have a change applied.
+
+# Scattered confidential files, wherever they sit in the tree. No exemption
+# here: credentials do not belong in the repository, for anyone.
+- id: no-credentials-anywhere
+  subject:
+    type: any
+  paths:
+    - "**/*.env"
+    - "**/*.pem"
+    - "**/id_rsa*"
+  actions: [read, write, create, delete, admin]
+  effect: deny
+  description: Credentials must not live in the repository.
+
+- id: platform-owns-everything
+  subject:
+    type: group
+    id: platform
+  paths:
+    - "**"
+  actions: [read, write, create, delete, admin]
+  effect: allow
+  description: Platform team.
+
+# --- Structural protections -------------------------------------------------
+
+# Write access to CI is read access to the whole repository: a workflow runs
+# with a full checkout and can print anything. The enforce guards already
+# require the admin action on these paths; this rule is what grants it.
+- id: platform-owns-ci
+  subject:
+    type: group
+    id: platform
+  paths:
+    - .github/
+    - .gitattributes
+    - .gitmodules
+  actions: [read, write, create, delete, admin]
+  effect: allow
+
+# --- Branch protection ------------------------------------------------------
+
+- id: no-direct-push-to-main
+  subject:
+    type: any
+  except:
+    - type: group
+      id: platform
+  paths:
+    - "**"
+  refs:
+    - refs/heads/main
+  actions: [write, create, delete]
+  effect: deny
+  description: main is updated through pull requests only.
+
+# Interns work on their own branches.
+- id: interns-are-branch-scoped
+  subject:
+    type: group
+    id: interns
+  paths:
+    - "**"
+  refs:
+    - refs/heads/release/**
+  actions: [write, create, delete]
+  effect: deny
+  description: Interns do not push to release branches.

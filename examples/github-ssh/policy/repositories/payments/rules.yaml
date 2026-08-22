@@ -1,0 +1,54 @@
+- id: engineering-reads-the-codebase
+  subject: { type: group, id: engineering }
+  paths: [src/, docs/, go.mod]
+  actions: [read]
+  effect: allow
+
+- id: api-team-owns-the-api
+  subject: { type: group, id: api }
+  paths: [src/api/]
+  actions: [read, write, create, delete]
+  effect: allow
+  description: The API team owns src/api.
+
+- id: ledger-team-owns-the-ledger
+  subject: { type: group, id: ledger }
+  paths: [src/ledger/]
+  actions: [read, write, create, delete]
+  effect: allow
+  description: The ledger team owns src/ledger.
+
+- id: the-ledger-is-owned-by-its-team
+  subject: { type: any }
+  except:
+    - { type: group, id: ledger }
+    - { type: group, id: platform }
+  paths: [src/ledger/]
+  actions: [write, create, delete]
+  effect: deny
+  description: >-
+    Posting and reconciliation are owned by the ledger team. Read the code
+    freely; open a pull request in #payments-ledger to change it.
+
+- id: engineering-improves-the-docs
+  subject: { type: group, id: engineering }
+  paths: [docs/]
+  actions: [read, write, create]
+  effect: allow
+
+- id: platform-owns-the-repository
+  subject: { type: group, id: platform }
+  paths: ["**"]
+  actions: [read, write, create, delete, admin]
+  effect: allow
+
+- id: credentials-are-platform-only
+  subject: { type: any }
+  except:
+    - { type: group, id: platform }
+  paths: [secrets/, deploy/terraform/]
+  actions: [read, write, create, delete, admin]
+  effect: deny
+  description: >-
+    Payment credentials and production infrastructure are held by the platform
+    team. Open a request in #payments-platform to have a change applied.

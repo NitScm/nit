@@ -1,0 +1,32 @@
+# Users known to nit.
+#
+# The id is nit's own stable identity for a person. It never changes, even when
+# the forge account is renamed.
+#
+# forge_logins and email are used to attribute history and to verify commit
+# authorship. They are never used to authenticate: identity always comes from
+# the session token, because the author field of a commit is free text.
+
+- id: alice
+  email: alice@example.com
+  forge_logins:
+    github: alice-example
+
+- id: bob
+  email: bob@example.com
+  aliases:
+    - bob@contractor.example.com
+  forge_logins:
+    github: bob-example
+
+- id: carol
+  email: carol@example.com
+  forge_logins:
+    github: carol-example
+
+- id: dave
+  email: dave@example.com
+  forge_logins:
+    github: dave-example
+  # A disabled user is denied everything, whatever the rules say.
+  disabled: true

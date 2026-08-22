@@ -1,0 +1,20 @@
+# Keep the build context small and free of anything that should not travel into
+# an image layer.
+
+bin/
+var/
+dist/
+coverage.out
+*.test
+
+# Never: these are credentials.
+*.key
+*.pem
+nit.yaml
+.env
+
+.git/
+.github/
+docs/
+deploy/
+testdata/

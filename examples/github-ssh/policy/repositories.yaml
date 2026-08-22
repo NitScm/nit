@@ -1,0 +1,4 @@
+- id: payments
+  remote: ssh://git@github.com/acme/payments.git
+  forge: github
+  default_branch: main
