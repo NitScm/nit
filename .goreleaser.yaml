@@ -1,0 +1,149 @@
+# Release configuration.
+#
+#   goreleaser release --snapshot --clean    build everything locally, no tag
+#   git tag v0.1.0 && git push --tags        the real thing, through CI
+#
+# Four binaries, and they do not all go everywhere. nit and nitctl are the
+# tools a person runs — a developer's machine is as likely to be Windows as
+# anything else. nitd and nit-worker are server components: they compile for
+# Windows, but the worker's whole job is clone, apply, rebase and push through
+# a real git, and that has not been exercised there. Shipping a binary implies
+# it works; this one is not claimed until it is tested.
+
+version: 2
+
+project_name: nit
+
+before:
+  hooks:
+    - go mod tidy
+    - go test ./...
+
+builds:
+  # The tools people run: everywhere.
+  - id: cli
+    main: ./cmd/nit
+    binary: nit
+    env: [CGO_ENABLED=0]
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+    ldflags: &ldflags
+      - -s -w
+      - -X github.com/NitScm/nit/internal/buildinfo.version={{ .Version }}
+      - -X github.com/NitScm/nit/internal/buildinfo.commit={{ .FullCommit }}
+      - -X github.com/NitScm/nit/internal/buildinfo.date={{ .CommitDate }}
+
+  - id: nitctl
+    main: ./cmd/nitctl
+    binary: nitctl
+    env: [CGO_ENABLED=0]
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+    ldflags: *ldflags
+
+  # The server components: where servers actually run.
+  - id: nitd
+    main: ./cmd/nitd
+    binary: nitd
+    env: [CGO_ENABLED=0]
+    goos: [linux, darwin]
+    goarch: [amd64, arm64]
+    ldflags: *ldflags
+
+  - id: nit-worker
+    main: ./cmd/nit-worker
+    binary: nit-worker
+    env: [CGO_ENABLED=0]
+    goos: [linux, darwin]
+    goarch: [amd64, arm64]
+    ldflags: *ldflags
+
+archives:
+  # One archive per platform holding whichever binaries exist for it, so a
+  # Windows user gets nit and nitctl and is not left wondering why a server
+  # binary in the same zip does nothing.
+  - id: default
+    ids: [cli, nitctl, nitd, nit-worker]
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    files:
+      - README.md
+      - LICENSE
+      - CHANGELOG.md
+      - SECURITY.md
+      - src: docs/*.md
+        dst: docs
+
+# Ubuntu and Debian install a .deb; RHEL and Fedora an .rpm. Both carry all
+# four binaries: a package is installed on a machine that may be a server.
+nfpms:
+  - id: packages
+    ids: [cli, nitctl, nitd, nit-worker]
+    package_name: nit
+    vendor: NitScm
+    homepage: https://nitscm.github.io/docs/
+    maintainer: NitScm <nit@example.invalid>
+    description: |
+      An authorization layer between developers and a git forge.
+      Per-file read and write control inside a single repository.
+    license: Apache-2.0
+    formats: [deb, rpm]
+    bindir: /usr/bin
+    # git is not a Go dependency; it is a runtime one. A worker without it
+    # fails on its first task rather than at install time, which is the wrong
+    # moment to find out.
+    dependencies:
+      - git
+    contents:
+      - src: docs
+        dst: /usr/share/doc/nit
+        type: dir
+      - src: LICENSE
+        dst: /usr/share/doc/nit/LICENSE
+
+checksum:
+  name_template: checksums.txt
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  use: github
+  sort: asc
+  filters:
+    exclude:
+      - "^test:"
+      - "^ci:"
+      - "^chore:"
+      - Merge pull request
+  groups:
+    - title: Features
+      regexp: '^feat'
+      order: 0
+    - title: Fixes
+      regexp: '^fix'
+      order: 1
+    - title: Documentation
+      regexp: '^docs'
+      order: 2
+    - title: Other
+      order: 99
+
+release:
+  draft: false
+  prerelease: auto
+  footer: |
+    ## Installing
+
+    Linux, macOS and Windows instructions are in the documentation:
+    https://nitscm.github.io/docs/start/install/
+
+    **Verify what you downloaded** before running it:
+
+    ```sh
+    sha256sum --check --ignore-missing checksums.txt
+    ```

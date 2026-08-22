@@ -176,6 +176,30 @@ Code and comments are in English. The core packages are covered by tests that
 need no infrastructure; please keep it that way — anything requiring a database
 or a network belongs in `internal/`.
 
+## Installing
+
+Released binaries, Linux packages and checksums are on the
+[releases page](https://github.com/NitScm/nit/releases). The shortest routes:
+
+```sh
+# Ubuntu / Debian — installs all four binaries and requires git
+sudo apt install ./nit_0.1.0_linux_amd64.deb
+
+# Anywhere, with Go 1.25
+go install github.com/NitScm/nit/cmd/nit@latest
+
+# Confirm what you have
+nit version
+```
+
+Windows ships `nit` and `nitctl` — the tools a person runs. The server
+components are Linux and macOS: they compile for Windows, but a worker clones,
+applies, rebases and pushes through a real git, and that has not been exercised
+there. Publishing a binary claims it works; that claim waits for a test.
+
+Full instructions, including checksum verification and PowerShell:
+<https://nitscm.github.io/docs/start/install/>
+
 ## Building
 
 Requires Go 1.25 and git.

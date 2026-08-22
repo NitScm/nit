@@ -42,6 +42,7 @@ import (
 	"github.com/NitScm/nit/internal/auth"
 	"github.com/NitScm/nit/internal/blob"
 	"github.com/NitScm/nit/internal/bootstrap"
+	"github.com/NitScm/nit/internal/buildinfo"
 	"github.com/NitScm/nit/internal/policyloader"
 	"github.com/NitScm/nit/internal/queue"
 	"github.com/NitScm/nit/internal/server"
@@ -59,11 +60,18 @@ func main() {
 
 func run(args []string) error {
 	fs := flag.NewFlagSet("nitd", flag.ContinueOnError)
+
+	showVersion := fs.Bool("version", false, "print the build identity and exit")
 	configFile := fs.String("config", "",
 		"configuration file (default: $NIT_CONFIG, ./nit.yaml, ~/.config/nit/nit.yaml, /etc/nit/nit.yaml)")
 
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+
+	if *showVersion {
+		fmt.Println("nitd", buildinfo.Get())
+		return nil
 	}
 
 	cfg, err := bootstrap.LoadConfigFrom(*configFile)

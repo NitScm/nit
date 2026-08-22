@@ -32,6 +32,7 @@ import (
 
 	"github.com/NitScm/nit/internal/blob"
 	"github.com/NitScm/nit/internal/bootstrap"
+	"github.com/NitScm/nit/internal/buildinfo"
 	"github.com/NitScm/nit/internal/policyloader"
 	"github.com/NitScm/nit/internal/queue"
 	"github.com/NitScm/nit/internal/store/postgres"
@@ -53,6 +54,8 @@ func main() {
 func run(args []string) error {
 	fs := flag.NewFlagSet("nit-worker", flag.ContinueOnError)
 
+	showVersion := fs.Bool("version", false, "print the build identity and exit")
+
 	queues := fs.String("queues", "push,pull", "task kinds this worker takes")
 	concurrency := fs.Int("concurrency", 1, "runners in this process")
 	name := fs.String("name", hostname(), "identifier recorded on leases")
@@ -60,6 +63,11 @@ func run(args []string) error {
 
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+
+	if *showVersion {
+		fmt.Println("nit-worker", buildinfo.Get())
+		return nil
 	}
 
 	cfg, err := bootstrap.LoadConfigFrom(*configFile)

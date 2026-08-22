@@ -75,6 +75,22 @@ from.
 - [`examples/github-ssh/`](examples/github-ssh) — a worked deployment against
   GitHub over SSH, with an 18-case policy validation dataset that runs offline.
 
+### Releases
+
+Tagging `v*` publishes archives for Linux, macOS and Windows, `.deb` and `.rpm`
+packages, and a checksums file, through `.goreleaser.yaml` and
+`.github/workflows/release.yml`.
+
+`nit`, `nitd`, `nit-worker` and `nitctl` all answer `version`, stamped at
+release time and falling back to what the toolchain records — so a binary
+installed with `go install` still identifies itself. A build that cannot say
+which build it is turns every bug report into a guess.
+
+Windows gets `nit` and `nitctl` only. The server components compile for it, but
+a worker's job is clone, apply, rebase and push through a real git and that has
+not been exercised there; a published binary is a claim, and this one is not
+made yet.
+
 ### Known limits
 
 Documented rather than hidden. The arithmetic is in

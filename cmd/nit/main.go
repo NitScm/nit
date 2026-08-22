@@ -26,6 +26,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/NitScm/nit/internal/buildinfo"
 	"github.com/NitScm/nit/internal/client"
 	"github.com/NitScm/nit/internal/flow"
 	"github.com/NitScm/nit/internal/workspace"
@@ -42,6 +43,7 @@ Usage:
   nit push -m <message> [--check] [--drop-unauthorized]
   nit status
   nit whoami [-server <url>]
+  nit version
 
 Run "nit <command> -h" for the options of a command.
 `
@@ -82,6 +84,9 @@ func run(ctx context.Context, args []string) error {
 		return status(ctx, args[1:])
 	case "whoami":
 		return whoami(ctx, args[1:])
+	case "version", "-version", "--version":
+		fmt.Println("nit", buildinfo.Get())
+		return nil
 	case "help", "-h", "--help":
 		fmt.Print(usage)
 		return nil

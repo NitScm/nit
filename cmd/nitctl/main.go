@@ -17,6 +17,7 @@ import (
 
 	"github.com/NitScm/nit/internal/auth"
 	"github.com/NitScm/nit/internal/bootstrap"
+	"github.com/NitScm/nit/internal/buildinfo"
 	"github.com/NitScm/nit/internal/policyloader"
 	"github.com/NitScm/nit/internal/store"
 	"github.com/NitScm/nit/internal/store/postgres"
@@ -41,6 +42,7 @@ Usage:
   nitctl stats           [-server URL] [-token T] [-json]
   nitctl tasks           [-state S] [-kind K] [-repository R] [-limit N] [-json]
   nitctl audit           [-user U] [-repository R] [-request ID] [-since 24h] [-json]
+  nitctl version
 
 Commands:
   config            Inspect the effective configuration, or write a starter file.
@@ -68,6 +70,12 @@ func run(args []string) error {
 	if len(args) == 0 {
 		fmt.Fprint(os.Stderr, usage)
 		return fmt.Errorf("no command")
+	}
+
+	switch args[0] {
+	case "version", "-version", "--version":
+		fmt.Println("nitctl", buildinfo.Get())
+		return nil
 	}
 
 	if args[0] == "config" {

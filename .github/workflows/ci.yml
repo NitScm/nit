@@ -1,0 +1,83 @@
+# The checks every change has to pass.
+#
+# The PostgreSQL service is the point of this file. Without NIT_TEST_POSTGRES
+# the store conformance suite skips itself and the run is green while the
+# queue, the sync points and the audit trail go untested — which is precisely
+# where three real bugs were found by running against a database rather than a
+# mock.
+
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: nit_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Formatting
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "not gofmt'd:"; echo "$unformatted"; exit 1
+          fi
+
+      - run: go vet ./...
+
+      - name: Create the migrate-test database
+        run: |
+          PGPASSWORD=postgres psql -h localhost -U postgres -c 'CREATE DATABASE nit_migrate_test'
+
+      - name: Test with the race detector
+        env:
+          NIT_TEST_POSTGRES: postgres://postgres:postgres@localhost:5432/nit_test
+          NIT_TEST_POSTGRES_MIGRATE: postgres://postgres:postgres@localhost:5432/nit_migrate_test
+        run: go test -race -count=1 ./...
+
+      - name: Policy validation dataset
+        run: |
+          go build -o bin/nitctl ./cmd/nitctl
+          PATH="$PWD/bin:$PATH" ./examples/github-ssh/check-policy.sh ./examples/github-ssh/policy
+
+  cross-compile:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # A release ships these targets, so a change that breaks one of them
+      # should fail here rather than during a release.
+      - name: Build every released target
+        run: |
+          for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
+            GOOS=${target%/*} GOARCH=${target#*/} go build -o /dev/null ./cmd/...
+          done
+          for target in windows/amd64 windows/arm64; do
+            GOOS=${target%/*} GOARCH=${target#*/} go build -o /dev/null ./cmd/nit ./cmd/nitctl
+          done

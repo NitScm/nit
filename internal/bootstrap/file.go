@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -196,6 +197,20 @@ func errEOF(err error) error {
 // is the recommended way to keep the configuration file itself unprivileged.
 func (f *File) checkPermissions(path string) error {
 	if !f.hasInlineSecret() {
+		return nil
+	}
+
+	// Windows has no POSIX permission bits. Go synthesises Mode().Perm() from
+	// the read-only attribute alone, so every file reports 0666 and this check
+	// would refuse every configuration carrying a secret — while telling the
+	// operator to run chmod, which does not exist there.
+	//
+	// Access control on Windows is an ACL, and os.Stat cannot see one. Skipping
+	// is therefore not a weakening of a check that worked: it is declining to
+	// enforce something this API cannot observe. Deployments on Windows have to
+	// secure the file themselves, or use the _file indirections, which carry no
+	// secret at all.
+	if runtime.GOOS == "windows" {
 		return nil
 	}
 

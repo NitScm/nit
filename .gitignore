@@ -38,3 +38,6 @@ work/
 
 # Local maintenance scripts kept out of history.
 git-rewrite-identity.sh
+
+# goreleaser output
+/dist/

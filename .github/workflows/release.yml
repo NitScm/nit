@@ -1,0 +1,45 @@
+# Build and publish binaries when a version tag is pushed.
+#
+#   git tag v0.1.0
+#   git push origin v0.1.0
+#
+# Nothing here runs on an ordinary push: a release is a deliberate act, and a
+# tag is how you say so.
+
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # goreleaser derives the version, the changelog and the previous tag
+          # from history. A shallow clone has none of that and it fails late,
+          # after the builds have already run.
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # The suite runs here as well as in goreleaser's before-hook, because a
+      # failure at this point costs seconds and a failure mid-release leaves a
+      # tag pushed with nothing published against it.
+      - name: Test
+        run: go test ./...
+
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          version: '~> v2'
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
