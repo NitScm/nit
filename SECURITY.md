@@ -10,7 +10,7 @@ only thing it does. Reports are treated accordingly.
 
 Use GitHub's private vulnerability reporting on this repository
 (Security → Report a vulnerability), or email
-**`SECURITY_CONTACT_TO_BE_SET`**.
+**<xampydev@gmail.com>**.
 
 Please include:
 

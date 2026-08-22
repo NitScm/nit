@@ -58,12 +58,16 @@ builds:
     goarch: [amd64, arm64]
     ldflags: *ldflags
 
+# Two archives, not one. A single archive holding whatever binaries exist for
+# each platform would carry four on Linux and two on Windows, which goreleaser
+# rejects outright — and rightly: someone unzipping it has no way to know
+# whether a missing binary is a deliberate choice or a broken build.
+#
+# Split by who runs what instead. A developer wants nit and nitctl on whatever
+# they use; an operator wants the server components on a server.
 archives:
-  # One archive per platform holding whichever binaries exist for it, so a
-  # Windows user gets nit and nitctl and is not left wondering why a server
-  # binary in the same zip does nothing.
-  - id: default
-    ids: [cli, nitctl, nitd, nit-worker]
+  - id: tools
+    ids: [cli, nitctl]
     formats: [tar.gz]
     format_overrides:
       - goos: windows
@@ -74,6 +78,16 @@ archives:
       - README.md
       - LICENSE
       - CHANGELOG.md
+      - SECURITY.md
+
+  - id: server
+    ids: [nitd, nit-worker]
+    formats: [tar.gz]
+    name_template: >-
+      {{ .ProjectName }}-server_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    files:
+      - README.md
+      - LICENSE
       - SECURITY.md
       - src: docs/*.md
         dst: docs
@@ -86,7 +100,7 @@ nfpms:
     package_name: nit
     vendor: NitScm
     homepage: https://nitscm.github.io/docs/
-    maintainer: NitScm <nit@example.invalid>
+    maintainer: NitScm <xampydev@gmail.com>
     description: |
       An authorization layer between developers and a git forge.
       Per-file read and write control inside a single repository.
@@ -99,11 +113,16 @@ nfpms:
     dependencies:
       - git
     contents:
-      - src: docs
-        dst: /usr/share/doc/nit
-        type: dir
+      # A glob, not `type: dir` — that creates the directory and copies
+      # nothing, which packages an empty folder and looks like it worked.
+      - src: docs/*.md
+        dst: /usr/share/doc/nit/
       - src: LICENSE
         dst: /usr/share/doc/nit/LICENSE
+      - src: README.md
+        dst: /usr/share/doc/nit/README.md
+      - src: SECURITY.md
+        dst: /usr/share/doc/nit/SECURITY.md
 
 checksum:
   name_template: checksums.txt
