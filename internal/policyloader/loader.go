@@ -18,19 +18,15 @@ import (
 	policyconfig "github.com/NitScm/nit/pkg/policy/config"
 )
 
-// Source provides the policy currently in force.
+// Source and Static now live in pkg/policy, so that an implementation outside
+// this module can supply a bundle without importing internal packages. These
+// aliases keep existing callers compiling and say where to look.
 //
-// It is an interface so that tests, and the worker, can supply a fixed bundle
-// without a directory on disk.
-type Source interface {
-	Current() *policy.Policy
-}
+// See docs/EXTENSIONS.md.
+type Source = policy.Source
 
 // Static is a Source wrapping one immutable policy.
-type Static struct{ Policy *policy.Policy }
-
-// Current implements Source.
-func (s Static) Current() *policy.Policy { return s.Policy }
+type Static = policy.Static
 
 // Loader watches a bundle directory.
 type Loader struct {
