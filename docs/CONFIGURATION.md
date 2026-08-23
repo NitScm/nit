@@ -311,9 +311,14 @@ like a database password.
 
 | File key | Variable | Default | What it is |
 | --- | --- | --- | --- |
-| `storage.blob_dir` | `NIT_BLOB_DIR` | `./var/blobs` | Where patch payloads are stored |
+| `storage.blob_dir` | `NIT_BLOB_DIR` | `./var/blobs` | Where patch payloads are stored, under a per-tenant subdirectory |
 | `storage.work_dir` | `NIT_WORK_DIR` | `./var/work` | Where a worker keeps its git mirrors and task worktrees (worker only) |
 | `storage.mirror_budget_bytes` | `NIT_MIRROR_BUDGET_BYTES` | `21474836480` (20 GiB) | Disk the mirrors may occupy before the least recently used are evicted; `0` disables eviction |
+
+Payloads live under `<blob_dir>/<tenant>/`, which is `default/` in a
+single-tenant deployment. Blobs written by an earlier version sit directly in
+`<blob_dir>` and are still read from there, so an upgrade loses nothing in
+flight; that fallback goes away once nothing predates the move.
 
 **`NIT_BLOB_DIR` must be shared between `nitd` and every worker.** `nitd` writes
 the authorized patch there and the worker reads it back; two processes with two

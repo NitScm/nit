@@ -16,6 +16,7 @@
 package synctoken
 
 import (
+	"crypto/hkdf"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
@@ -25,12 +26,21 @@ import (
 	"strings"
 	"time"
 
+	"github.com/NitScm/nit/pkg/policy"
 	"github.com/NitScm/nit/pkg/protocol"
 	"github.com/NitScm/nit/pkg/store"
 )
 
-// version prefixes every token so the format can change without ambiguity.
-const version = "st1"
+// Token versions. The prefix exists so the format can change without ambiguity,
+// and this is the change it was for.
+//
+// st1 was signed with the deployment's root key directly. st2 is signed with a
+// key derived per tenant, so a token minted for one tenant cannot verify for
+// another even if a routing bug hands it to the wrong one.
+const (
+	version       = "st2"
+	legacyVersion = "st1"
+)
 
 // MinKeyBytes is the shortest signing key accepted. A short key makes the
 // signature forgeable, and a forgeable sync token is a way to have the server
@@ -61,19 +71,60 @@ type Payload struct {
 	IssuedAt int64 `json:"t"`
 }
 
-// Signer mints and verifies tokens.
-type Signer struct {
+// Root holds the deployment's secret and derives the signers that use it.
+//
+// It cannot sign or verify anything itself, and that is the point. A signer is
+// obtained For a tenant, so a caller cannot accidentally mint a token that
+// verifies everywhere — the compiler asks which tenant, and there is no answer
+// that means "all of them".
+type Root struct {
 	key []byte
 }
 
-// NewSigner returns a signer over a secret key.
-func NewSigner(key []byte) (*Signer, error) {
+// NewRoot returns the root over a deployment's secret key.
+func NewRoot(key []byte) (*Root, error) {
 	if len(key) < MinKeyBytes {
 		return nil, fmt.Errorf("synctoken: key is %d bytes, need at least %d", len(key), MinKeyBytes)
 	}
 
-	return &Signer{key: append([]byte(nil), key...)}, nil
+	return &Root{key: append([]byte(nil), key...)}, nil
 }
+
+// For returns the signer of one tenant.
+//
+// The subkey is HKDF-SHA256 over the root, with the tenant in the info string.
+// Nothing is stored and nothing changes about rotation: rotating the root
+// rotates every tenant at once, which is the behaviour an operator already
+// expects.
+//
+// What it buys is that misrouting fails closed. A token minted for one tenant
+// presented to another does not verify, so a bug in whatever resolves the
+// tenant becomes a rejected token rather than a patch applied on a base the
+// client was never entitled to.
+func (r *Root) For(tenant policy.TenantID) (*Signer, error) {
+	if tenant == "" {
+		return nil, errors.New("synctoken: a signer needs a tenant")
+	}
+
+	// The version is in the info string, so a future format cannot reuse a key
+	// derived for this one.
+	key, err := hkdf.Key(sha256.New, r.key, nil, "nit/"+version+"/tenant/"+string(tenant), 32)
+	if err != nil {
+		return nil, fmt.Errorf("synctoken: derive key for %s: %w", tenant, err)
+	}
+
+	return &Signer{key: key, root: r.key, tenant: tenant}, nil
+}
+
+// Signer mints and verifies the tokens of one tenant.
+type Signer struct {
+	key    []byte
+	root   []byte
+	tenant policy.TenantID
+}
+
+// Tenant reports whose tokens this signer mints.
+func (s *Signer) Tenant() policy.TenantID { return s.tenant }
 
 // Sign returns the token for a payload.
 func (s *Signer) Sign(p Payload) (protocol.SyncToken, error) {
@@ -93,15 +144,38 @@ func (s *Signer) Sign(p Payload) (protocol.SyncToken, error) {
 }
 
 // Verify checks a token's signature and returns its payload.
+//
+// A token from before per-tenant keys (st1, signed with the root directly) is
+// accepted, but **only by the default tenant's signer**. That is what keeps the
+// transition from outliving its purpose: the moment a deployment has a second
+// tenant, a legacy token stops verifying rather than verifying everywhere,
+// which is the hole the derivation exists to close.
+//
+// Every developer's stored token is refreshed by their next pull, so this can
+// be removed a release later.
 func (s *Signer) Verify(token protocol.SyncToken) (Payload, error) {
 	parts := strings.Split(string(token), ".")
-	if len(parts) != 3 || parts[0] != version {
+	if len(parts) != 3 {
+		return Payload{}, ErrMalformed
+	}
+
+	key := s.key
+
+	switch parts[0] {
+	case version:
+	case legacyVersion:
+		if s.tenant != policy.DefaultTenant {
+			return Payload{}, ErrBadSignature
+		}
+
+		key = s.root
+	default:
 		return Payload{}, ErrMalformed
 	}
 
 	// hmac.Equal, not ==: a byte-by-byte comparison that stops at the first
 	// difference leaks how much of a forged signature was correct.
-	if !hmac.Equal([]byte(parts[2]), []byte(s.mac(parts[0]+"."+parts[1]))) {
+	if !hmac.Equal([]byte(parts[2]), []byte(macWith(key, parts[0]+"."+parts[1]))) {
 		return Payload{}, ErrBadSignature
 	}
 
@@ -118,8 +192,10 @@ func (s *Signer) Verify(token protocol.SyncToken) (Payload, error) {
 	return p, nil
 }
 
-func (s *Signer) mac(message string) string {
-	h := hmac.New(sha256.New, s.key)
+func (s *Signer) mac(message string) string { return macWith(s.key, message) }
+
+func macWith(key []byte, message string) string {
+	h := hmac.New(sha256.New, key)
 	h.Write([]byte(message))
 
 	return base64.RawURLEncoding.EncodeToString(h.Sum(nil))

@@ -135,7 +135,7 @@ func newFixtureWith(t *testing.T, adminGroups []policy.GroupID, origins []string
 		Clock: func() time.Time { return testNow },
 	})
 
-	f.signer, err = synctoken.NewSigner([]byte(strings.Repeat("k", synctoken.MinKeyBytes)))
+	f.signer, err = newSigner([]byte(strings.Repeat("k", synctoken.MinKeyBytes)))
 	if err != nil {
 		t.Fatalf("NewSigner: %v", err)
 	}
@@ -587,7 +587,7 @@ func TestPushSyncPointChecks(t *testing.T) {
 		f := newFixture(t)
 		f.seedSyncPoint("main", baseCommit)
 
-		attacker, err := synctoken.NewSigner([]byte(strings.Repeat("x", synctoken.MinKeyBytes)))
+		attacker, err := newSigner([]byte(strings.Repeat("x", synctoken.MinKeyBytes)))
 		if err != nil {
 			t.Fatalf("NewSigner: %v", err)
 		}

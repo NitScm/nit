@@ -41,6 +41,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -157,7 +158,7 @@ func Serve(ctx context.Context, cfg Config, deps Deps) error {
 	}
 	defer parts.close()
 
-	signer, err := synctoken.NewSigner(cfg.SyncKey)
+	signer, err := tenantSigner(cfg)
 	if err != nil {
 		return err
 	}
@@ -227,7 +228,7 @@ func Work(ctx context.Context, cfg Config, opts WorkerOptions, deps WorkerDeps) 
 	}
 	defer parts.close()
 
-	signer, err := synctoken.NewSigner(cfg.SyncKey)
+	signer, err := tenantSigner(cfg)
 	if err != nil {
 		return err
 	}
@@ -378,7 +379,7 @@ func open(ctx context.Context, cfg Config, deps Deps) (*parts, error) {
 	}
 
 	if p.blobs == nil {
-		blobs, err := filesystem.New(cfg.BlobDir)
+		blobs, err := tenantBlobs(cfg.BlobDir, policy.DefaultTenant)
 		if err != nil {
 			p.close()
 			return nil, err
@@ -456,4 +457,44 @@ func hostname() string {
 	}
 
 	return name
+}
+
+// tenantSigner derives the signer for the tenant this process serves.
+//
+// One tenant today, and the derivation is what makes that a *statement* rather
+// than an assumption: a token minted here carries a key that only this tenant's
+// signer reproduces, so the day a second tenant exists, misrouting one fails
+// closed instead of succeeding quietly.
+func tenantSigner(cfg Config) (*synctoken.Signer, error) {
+	root, err := synctoken.NewRoot(cfg.SyncKey)
+	if err != nil {
+		return nil, err
+	}
+
+	return root.For(policy.DefaultTenant)
+}
+
+// tenantBlobs roots the blob store under the tenant that owns it.
+//
+// The namespace used to be flat, so two tenants pushing identical bytes shared
+// a blob. Today that is unreachable — a patch is fetched through its task and
+// never through a bare digest — but it is a deduplication side channel waiting
+// for the first endpoint that takes a digest, and cross-tenant dedup is worth
+// nothing.
+//
+// The fallback is what makes the move invisible to a running deployment. Blobs
+// written before it sit one directory up; reads find them there until the last
+// one expires, and the fallback can then be removed with the old directory.
+func tenantBlobs(root string, tenant policy.TenantID) (blob.Store, error) {
+	scoped, err := filesystem.New(filepath.Join(root, string(tenant)))
+	if err != nil {
+		return nil, err
+	}
+
+	legacy, err := filesystem.New(root)
+	if err != nil {
+		return nil, err
+	}
+
+	return blob.Fallback{Primary: scoped, Secondary: legacy}, nil
 }

@@ -180,7 +180,7 @@ func newHarnessWithPolicy(t *testing.T, p *policy.Policy) *harness {
 	}
 	h.blobs = blobs
 
-	h.signer, err = synctoken.NewSigner([]byte(strings.Repeat("k", synctoken.MinKeyBytes)))
+	h.signer, err = newSigner([]byte(strings.Repeat("k", synctoken.MinKeyBytes)))
 	if err != nil {
 		t.Fatalf("NewSigner: %v", err)
 	}

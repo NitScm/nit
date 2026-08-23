@@ -175,7 +175,7 @@ func newStack(t *testing.T) *stack {
 	compiled := testPolicy(t, s.upstream)
 	source := policyloader.NewStatic(compiled)
 
-	signer, err := synctoken.NewSigner([]byte(strings.Repeat("k", synctoken.MinKeyBytes)))
+	signer, err := newSigner([]byte(strings.Repeat("k", synctoken.MinKeyBytes)))
 	if err != nil {
 		t.Fatalf("NewSigner: %v", err)
 	}

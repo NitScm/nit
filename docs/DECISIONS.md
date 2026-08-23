@@ -1136,3 +1136,63 @@ the lesson is now written where both implementations can see it.
 migration lands would otherwise look like free branches to the first claim
 afterwards — two workers on one branch, caused by the change that exists to
 prevent that.
+
+
+---
+
+## D42 — A sync token is signed with a key derived per tenant
+
+**Decision.** `synctoken.Root` holds the deployment secret and cannot sign
+anything. A `Signer` is obtained `For` a tenant, with an HKDF-SHA256 subkey.
+Tokens carry `st2`; `st1` tokens still verify, but only for the default tenant.
+
+**Why.** A sync token is the client's claim about which upstream commit its
+patch was computed against, and the server applies the patch on top of whatever
+the token names. One key per deployment means a token minted for one tenant
+verifies for every other, so a bug in whatever resolves the tenant stops being a
+rejected request and becomes a patch applied on somebody else's repository, on a
+base its author was never entitled to see.
+
+**Why a type and not a convention.** The root cannot sign. Asking for a signer
+means naming a tenant, and there is no value that means "all of them", so the
+compiler asks the question rather than a reviewer. A derivation that a caller
+could forget is a derivation that will be forgotten.
+
+**Rotation is unchanged.** Nothing is stored; rotating the root rotates every
+tenant at once, which is what an operator already expects.
+
+**The legacy format is scoped to the world it came from.** `st1` tokens verify
+only under the default tenant's signer, so the moment a deployment has a second
+tenant they are refused rather than accepted everywhere. Without that scoping
+the transition would quietly become the hole it exists to close. It costs a
+release: every developer's stored token is replaced by their next pull.
+
+---
+
+## D43 — Blobs are stored under the tenant that owns them
+
+**Decision.** The filesystem blob store is rooted at
+`storage.blob_dir/<tenant>`. `blob.Fallback` reads the old flat location when
+the new one misses.
+
+**Why, given the leak is currently unreachable.** A patch is fetched through its
+task, and `handleTaskPatch` guards on ownership; there is no endpoint that takes
+a bare digest. So today a shared namespace leaks nothing. It is a deduplication
+side channel waiting for the first endpoint that takes a digest — and
+cross-tenant dedup is worth nothing, so there is no argument on the other side.
+
+**Why no interface change.** A tenant is a different *root*, not a different
+method signature. `blob.Store` is untouched, the S3 implementation in the
+commercial edition uses its existing prefix, and the conformance suite did not
+move.
+
+**Why the fallback.** The blob store holds the authorized patch between the
+control plane and a worker, so a patch that becomes unreachable mid-flight is a
+push failing with `missing_patch` — the error operators already associate with a
+misconfigured deployment. Handing them that error *because of an upgrade* would
+teach exactly the wrong lesson.
+
+It is transitional and should be removed once no blob predates the move, which
+is one artifact TTL — a day by default. Deletes reach both stores so the old
+location empties itself rather than being kept alive by the thing meant to
+retire it.

@@ -2,6 +2,7 @@ package synctoken
 
 import (
 	"errors"
+	"github.com/NitScm/nit/pkg/policy"
 	"strings"
 	"testing"
 
@@ -14,9 +15,9 @@ func storeID(s string) store.ID { return store.ID(s) }
 func newTestSigner(t *testing.T) *Signer {
 	t.Helper()
 
-	s, err := NewSigner([]byte(strings.Repeat("k", MinKeyBytes)))
+	s, err := signerOver([]byte(strings.Repeat("k", MinKeyBytes)))
 	if err != nil {
-		t.Fatalf("NewSigner: %v", err)
+		t.Fatalf("signer: %v", err)
 	}
 	return s
 }
@@ -92,9 +93,9 @@ func newSignerWithKey(t *testing.T, key string) *Signer {
 		key += key
 	}
 
-	s, err := NewSigner([]byte(key))
+	s, err := signerOver([]byte(key))
 	if err != nil {
-		t.Fatalf("NewSigner: %v", err)
+		t.Fatalf("signer: %v", err)
 	}
 	return s
 }
@@ -119,7 +120,7 @@ func TestVerifyRejectsMalformed(t *testing.T) {
 
 // A short key makes the signature forgeable, which makes the token forgeable.
 func TestNewSignerRejectsShortKey(t *testing.T) {
-	if _, err := NewSigner([]byte("too short")); err == nil {
+	if _, err := signerOver([]byte("too short")); err == nil {
 		t.Error("a short signing key must be refused")
 	}
 }
@@ -144,4 +145,14 @@ func TestMatches(t *testing.T) {
 			t.Errorf("Matches accepted %v", c)
 		}
 	}
+}
+
+// signerOver builds the default tenant's signer over a raw key.
+func signerOver(key []byte) (*Signer, error) {
+	root, err := NewRoot(key)
+	if err != nil {
+		return nil, err
+	}
+
+	return root.For(policy.DefaultTenant)
 }
