@@ -18,12 +18,14 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/NitScm/nit/internal/auditlog"
 	"github.com/NitScm/nit/internal/auth"
 	"github.com/NitScm/nit/internal/blob"
 	"github.com/NitScm/nit/internal/policyloader"
 	"github.com/NitScm/nit/internal/queue"
 	"github.com/NitScm/nit/internal/store"
 	"github.com/NitScm/nit/internal/synctoken"
+	"github.com/NitScm/nit/pkg/audit"
 	"github.com/NitScm/nit/pkg/enforce"
 	"github.com/NitScm/nit/pkg/policy"
 	"github.com/NitScm/nit/pkg/protocol"
@@ -106,12 +108,20 @@ type Deps struct {
 	SyncTokens *synctoken.Signer
 	Log        *slog.Logger
 	Now        func() time.Time
+
+	// AuditSink receives every decision in addition to the database. Nil means
+	// persist only, which is the default and what most deployments run.
+	AuditSink audit.Sink
 }
 
 // Server serves the nit API.
 type Server struct {
 	cfg  Config
 	deps Deps
+
+	// audit persists every decision and forwards it, and cannot fail an
+	// operation while doing so.
+	audit *auditlog.Recorder
 
 	mux *http.ServeMux
 
@@ -154,7 +164,11 @@ func New(cfg Config, deps Deps) (*Server, error) {
 		deps.Now = func() time.Time { return time.Now().UTC() }
 	}
 
-	s := &Server{cfg: cfg, deps: deps}
+	s := &Server{
+		cfg:   cfg,
+		deps:  deps,
+		audit: auditlog.New(deps.Store.Audit(), deps.AuditSink, deps.Log),
+	}
 	s.mux = s.buildRoutes()
 
 	return s, nil

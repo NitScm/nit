@@ -125,7 +125,7 @@ func (w *Worker) handlePush(ctx context.Context, task *store.Task) ([]byte, erro
 		result.NextSync = token
 	}
 
-	w.audit(ctx, &store.AuditRecord{
+	w.audit.Record(ctx, spec.Repository, &store.AuditRecord{
 		TenantID:      w.cfg.Tenant,
 		OccurredAt:    w.deps.Now(),
 		ActorUserID:   spec.UserID,
@@ -224,8 +224,3 @@ func detail(fields map[string]string) []byte {
 // A worker that failed to write its audit line has still performed the work;
 // failing the task would re-run a push that already landed. The failure is
 // loud and the operator decides.
-func (w *Worker) audit(ctx context.Context, record *store.AuditRecord) {
-	if err := w.deps.Store.Audit().Append(ctx, record); err != nil {
-		w.deps.Log.ErrorContext(ctx, "audit append failed", "error", err, "action", record.Action)
-	}
-}

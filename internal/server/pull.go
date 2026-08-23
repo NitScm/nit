@@ -101,7 +101,7 @@ func (s *Server) handlePull(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 
-	if err := s.deps.Store.Audit().Append(ctx, &store.AuditRecord{
+	s.audit.Record(ctx, repo.PolicyRepoID, &store.AuditRecord{
 		TenantID:      s.cfg.Tenant,
 		OccurredAt:    s.deps.Now(),
 		ActorUserID:   principal.User.ID,
@@ -112,9 +112,7 @@ func (s *Server) handlePull(w http.ResponseWriter, r *http.Request) error {
 		PolicyVersion: current.Version(),
 		RequestID:     req.RequestID,
 		TaskID:        task.ID,
-	}); err != nil {
-		s.deps.Log.ErrorContext(ctx, "audit append failed", "error", err, "request", req.RequestID)
-	}
+	})
 
 	writeJSON(w, http.StatusAccepted, protocol.PullResponse{TaskID: string(task.ID)})
 

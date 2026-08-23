@@ -361,13 +361,9 @@ func (s *Server) auditPush(ctx context.Context, principal *auth.Principal, repo 
 		})
 	}
 
-	// Audit is best-effort at request time: refusing an authorized push because
-	// the log write failed would be its own kind of outage. A failure here is
-	// loud, and the operator decides.
-	if err := s.deps.Store.Audit().Append(ctx, records...); err != nil {
-		s.deps.Log.ErrorContext(ctx, "audit append failed",
-			"error", err, "request", req.RequestID, "action", action)
-	}
+	// Best-effort by construction: Record returns nothing, so this call site
+	// could not propagate a logging failure into the push even if it wanted to.
+	s.audit.Record(ctx, repo.PolicyRepoID, records...)
 }
 
 func displayName(p *auth.Principal) string {

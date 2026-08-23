@@ -21,6 +21,7 @@ package audit
 import (
 	"context"
 	"errors"
+	"time"
 )
 
 // Record is one authorization decision, in the form a Sink receives it.
@@ -29,7 +30,10 @@ import (
 // somewhere that has never heard of this database, and giving it primary keys
 // would invite it to join on them.
 type Record struct {
-	OccurredAt string
+	// OccurredAt is a time, not a formatted string: how a destination wants it
+	// rendered is the sink's business, and baking one format in here would make
+	// every sink that wants another one parse it back.
+	OccurredAt time.Time
 
 	// Actor is the bundle identity that acted — the stable key, not a display
 	// name. Names and addresses collide and change.
@@ -39,6 +43,9 @@ type Record struct {
 	// push.denied_path, pull.delivered, and so on.
 	Action string
 
+	// Repository is the bundle identity, supplied by the caller — never the
+	// database row id. A sink writes somewhere that has never heard of this
+	// database, and handing it a primary key invites it to join on one.
 	Repository string
 	Branch     string
 

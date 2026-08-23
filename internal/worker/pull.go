@@ -110,7 +110,7 @@ func (w *Worker) handlePull(ctx context.Context, task *store.Task) ([]byte, erro
 	}
 	result.NextSync = token
 
-	w.audit(ctx, &store.AuditRecord{
+	w.audit.Record(ctx, spec.Repository, &store.AuditRecord{
 		TenantID:      w.cfg.Tenant,
 		OccurredAt:    w.deps.Now(),
 		ActorUserID:   spec.UserID,

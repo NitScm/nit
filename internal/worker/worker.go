@@ -22,10 +22,12 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/NitScm/nit/internal/auditlog"
 	"github.com/NitScm/nit/internal/blob"
 	"github.com/NitScm/nit/internal/policyloader"
 	"github.com/NitScm/nit/internal/store"
 	"github.com/NitScm/nit/internal/synctoken"
+	"github.com/NitScm/nit/pkg/audit"
 	"github.com/NitScm/nit/pkg/enforce"
 	"github.com/NitScm/nit/pkg/forge"
 	"github.com/NitScm/nit/pkg/gitx"
@@ -86,12 +88,20 @@ type Deps struct {
 	SyncTokens *synctoken.Signer
 	Log        *slog.Logger
 	Now        func() time.Time
+
+	// AuditSink receives every decision in addition to the database. Nil means
+	// persist only, which is the default and what most deployments run.
+	AuditSink audit.Sink
 }
 
 // Worker executes tasks.
 type Worker struct {
 	cfg  Config
 	deps Deps
+
+	// audit persists every decision and forwards it, and cannot fail a task
+	// while doing so.
+	audit *auditlog.Recorder
 }
 
 // New wires a worker.
@@ -125,7 +135,11 @@ func New(cfg Config, deps Deps) (*Worker, error) {
 		return nil, fmt.Errorf("worker: create work dir: %w", err)
 	}
 
-	return &Worker{cfg: cfg, deps: deps}, nil
+	return &Worker{
+		cfg:   cfg,
+		deps:  deps,
+		audit: auditlog.New(deps.Store.Audit(), deps.AuditSink, deps.Log),
+	}, nil
 }
 
 // Handle executes a task and returns its marshalled result. It is the

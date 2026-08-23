@@ -44,6 +44,12 @@ Two properties an implementation must preserve:
 failure, joining the errors. Stopping at the first would make the order of
 configuration decide which destinations receive a record.
 
+Set one on `server.Deps.AuditSink` or `worker.Deps.AuditSink`. Nil means
+persist only, which is the default. Records reach a sink with the bundle's
+repository identity rather than a database row id — a sink writes somewhere
+that has never heard of this database, and handing it a primary key invites it
+to join on one.
+
 ### `store.Store` — where the state lives
 
 The queue, sync points, sessions and the audit trail. Two implementations ship:
