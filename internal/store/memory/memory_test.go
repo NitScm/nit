@@ -9,7 +9,13 @@ import (
 )
 
 func TestConformance(t *testing.T) {
-	storetest.Run(t, func(t *testing.T) store.Store {
-		return memory.New()
-	})
+	storetest.Run(t, newStore)
+}
+
+func TestPrunerConformance(t *testing.T) {
+	storetest.RunPruner(t, newStore)
+}
+
+func newStore(t *testing.T) store.Store {
+	return memory.New()
 }

@@ -890,3 +890,63 @@ backends and an invalidation story. Each pull records `reused_projection` in its
 audit detail, so the hit rate is observable before anyone pays for the shared
 version — and so an operator asking why one pull took 40 ms and another 40
 seconds is told rather than left to guess.
+
+---
+
+## D37 — Retention is an operator command, and partitioning is not the default
+
+**Decision.** `nitctl audit prune` removes audit records older than a cutoff, on
+all three backends. It is exposed through `store.AuditPruner`, which is
+deliberately not part of `store.Store`. Range-partitioning `audit_log` remains
+available to an operator and is not recommended.
+
+**Why it had to exist.** Until now nothing could remove an audit record. D31
+made that honest — a `DELETE` fails loudly instead of silently removing nothing
+— but honest is not the same as usable: a deployment obliged to honour a
+retention period had no way to honour it. That is a compliance problem, and it
+was the last one on the list.
+
+**Why not on the Store interface.** A server or a worker holds a `store.Store`.
+If pruning were reachable from it, some code path eventually would, and the
+component that records evidence would be able to remove it. Keeping the
+capability behind a type assertion nothing on the request path performs is what
+makes a purge an operator action rather than a possible one.
+
+**Why it counts before it deletes.** Without `-yes` the command reports what
+matches and stops. There is no undo, and a cutoff a year off is an ordinary
+typo. A future cutoff — which would empty the table — is refused rather than
+executed faithfully.
+
+**Why the purge records itself, twice.** `audit.purge_started` before,
+`audit.purge_completed` after, both naming the operator. A purge killed halfway
+then leaves a `started` with no `completed`, which is exactly what an auditor
+needs to see. The alternative is a gap in the trail that nothing explains, which
+is indistinguishable from tampering.
+
+**What the backends cannot do equally.** PostgreSQL lifts and restores the guard
+inside each batch's transaction; `ALTER TABLE` takes a lock no concurrent
+session passes, so the guard is never observably off. MySQL and MariaDB have no
+`DISABLE TRIGGER`, only `DROP`, which is DDL and commits at once — so a window
+exists there. Three things make that acceptable: only the DELETE guard comes off
+(UPDATE stays refused throughout, so the window permits removal and never
+rewriting), the window can only be opened by an account with DDL rights, which
+could equally `DROP TABLE`, and the next prune reports a guard it finds already
+missing instead of silently restoring it. The guarantee always was "an
+application bug cannot rewrite history", never "an operator cannot".
+
+**Why partitioning is not the default.** It would make a purge O(1), and it
+weakens what it makes manageable. `DROP PARTITION` fires no trigger on any of
+the three engines — verified against MariaDB 11.8 and MySQL 8.4 — so
+partitioning converts "removing audit records requires deliberately lifting a
+guard" into "one `ALTER TABLE`". On MySQL and MariaDB it costs more: both refuse
+foreign keys on a partitioned table (error 1506), so `audit_log` would give up
+all four of its own, and `ON DELETE SET NULL` would stop cleaning up after a
+deleted user. It stays documented and available; whoever carries the compliance
+risk decides.
+
+**A correction this decision carries.** The schema comment claimed `audit_log`
+answers "who could do what, when, and under which rules?". The policy bundle's
+git history answers that, with blame and rollback, which is why rules live in
+files. What only this table holds is refusals — which leave no trace on the
+forge because they never reached it — and deliveries, which are the evidence a
+read rule was applied. The comment is corrected in both dialects.

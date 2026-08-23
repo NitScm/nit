@@ -508,7 +508,7 @@ within one branch.
 
 Two kinds of command, with two ways of reaching the system.
 
-**Server-side commands** talk to PostgreSQL directly and are run where the
+**Server-side commands** talk to the database directly and are run where the
 database is reachable:
 
 ```sh
@@ -517,10 +517,21 @@ nitctl migrate -status                      # list migrations without applying
 nitctl token create -user alice -label laptop -ttl 720h
 nitctl token list   -user alice
 nitctl token revoke -id <session-id>
+
+nitctl audit prune -keep-days 365           # counts what would go, deletes nothing
+nitctl audit prune -keep-days 365 -yes      # deletes, in batches
 ```
 
 They read `NIT_DATABASE_URL` and `NIT_POLICY_DIR` from the environment, or take
 `-dsn` and `-policy`.
+
+`audit prune` is the only way to remove audit records, and it is here rather
+than among the operations commands on purpose: the server holds a `store.Store`
+and cannot reach the pruning interface through it, so no request can delete
+evidence. Without `-yes` it reports and stops — there is no undo. It writes
+`audit.purge_started` and `audit.purge_completed` into the trail it is emptying,
+naming whoever ran it, so an interrupted purge leaves a trace rather than an
+unexplained gap.
 
 **Operations commands** read the API, exactly as the web console does, so the
 API is exercised from day one and the console can never need a capability the

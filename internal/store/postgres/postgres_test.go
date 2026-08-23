@@ -26,7 +26,23 @@ func TestConformance(t *testing.T) {
 		t.Skip("NIT_TEST_POSTGRES not set")
 	}
 
-	storetest.Run(t, func(t *testing.T) store.Store {
+	storetest.Run(t, freshStore(dsn))
+}
+
+// TestPrunerConformance runs the retention suite, which the queue suite does
+// not cover: pruning is an operator capability rather than part of Store.
+func TestPrunerConformance(t *testing.T) {
+	dsn := os.Getenv("NIT_TEST_POSTGRES")
+	if dsn == "" {
+		t.Skip("NIT_TEST_POSTGRES not set")
+	}
+
+	storetest.RunPruner(t, freshStore(dsn))
+}
+
+// freshStore returns a factory that empties the database before each case.
+func freshStore(dsn string) storetest.Factory {
+	return func(t *testing.T) store.Store {
 		ctx := context.Background()
 
 		s, err := postgres.Open(ctx, dsn)
@@ -63,7 +79,7 @@ func TestConformance(t *testing.T) {
 		}
 
 		return s
-	})
+	}
 }
 
 // The audit trail's guarantee is that history cannot be rewritten. What

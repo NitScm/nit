@@ -3,6 +3,8 @@ package mysql
 import (
 	"context"
 	"database/sql"
+	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -572,3 +574,136 @@ var (
 	_ store.ArtifactStore  = (*artifactStore)(nil)
 	_ store.AuditStore     = (*auditStore)(nil)
 )
+
+// PruneAudit removes audit records older than a cutoff.
+//
+// The append-only trigger has to come off for the DELETE, and this backend has
+// no way to disable one: MySQL and MariaDB only have DROP TRIGGER, which is
+// DDL, which commits immediately and cannot be rolled back. So there is a real
+// window during which the table accepts deletions.
+//
+// Three things make that acceptable rather than merely unavoidable:
+//
+// The window exists only in a session that already holds DDL rights. The
+// application account has SELECT, INSERT, UPDATE and DELETE and nothing more —
+// see docs/CONFIGURATION.md — so it cannot open this window, and an account
+// that can could equally DROP TABLE. The guarantee has always been "an
+// application bug cannot rewrite history", never "an operator cannot".
+//
+// Only the DELETE trigger is dropped. UPDATE stays refused throughout, so the
+// window permits removal, never rewriting.
+//
+// The trigger is recreated with a context that ignores cancellation, so a
+// Ctrl-C during a long purge still closes the window. What survives that is a
+// hard kill, and the next prune reports it through GuardsWereMissing rather
+// than leaving an operator to discover it from a schema dump.
+func (s *Store) PruneAudit(ctx context.Context, before time.Time, batch int) (result store.PruneResult, retErr error) {
+	if batch <= 0 {
+		batch = 1000
+	}
+
+	// A pinned connection: DROP TRIGGER and the deletes must not be spread
+	// across connections, and the recreation must land on one that is still
+	// open.
+	conn, err := s.db.Conn(ctx)
+	if err != nil {
+		return result, mapError(err)
+	}
+	defer conn.Close()
+
+	present, err := triggerExists(ctx, conn, "audit_log_no_delete")
+	if err != nil {
+		return result, err
+	}
+
+	result.GuardsWereMissing = !present
+
+	if present {
+		if _, err := conn.ExecContext(ctx, `DROP TRIGGER audit_log_no_delete`); err != nil {
+			return result, fmt.Errorf("mysql: lift the append-only guard: %w", err)
+		}
+	}
+
+	// Deferred rather than written after the loop: every path out of this
+	// function, including a panic, has to close the window.
+	defer func() {
+		if _, err := conn.ExecContext(context.WithoutCancel(ctx), AuditNoDeleteTrigger); err != nil {
+			// Joined into the returned error when there is one, and surfaced
+			// on its own when there is not: an unprotected audit table is more
+			// serious than a failed purge.
+			err = fmt.Errorf("mysql: RESTORE THE APPEND-ONLY GUARD BY HAND — "+
+				"audit_log accepts DELETE until trigger audit_log_no_delete is "+
+				"recreated from migrations/mysql/0002: %w", err)
+
+			if retErr == nil {
+				retErr = err
+			} else {
+				retErr = errors.Join(retErr, err)
+			}
+		}
+	}()
+
+	for {
+		deleted, err := conn.ExecContext(ctx,
+			`DELETE FROM audit_log WHERE occurred_at < ? ORDER BY occurred_at LIMIT ?`,
+			before.UTC(), batch)
+		if err != nil {
+			return result, mapError(err)
+		}
+
+		removed, err := deleted.RowsAffected()
+		if err != nil {
+			return result, mapError(err)
+		}
+
+		result.Removed += removed
+
+		if removed < int64(batch) {
+			return result, nil
+		}
+
+		// Between batches the context is checked, so a cancelled purge stops
+		// having removed a whole number of batches rather than mid-statement.
+		if err := ctx.Err(); err != nil {
+			return result, err
+		}
+	}
+}
+
+// triggerExists reports whether a trigger of that name is defined on the
+// current database.
+func triggerExists(ctx context.Context, conn *sql.Conn, name string) (bool, error) {
+	var count int
+
+	err := conn.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM information_schema.triggers
+		WHERE trigger_schema = DATABASE() AND trigger_name = ?`, name).Scan(&count)
+	if err != nil {
+		return false, mapError(err)
+	}
+
+	return count > 0, nil
+}
+
+// auditNoDeleteTrigger recreates what PruneAudit drops.
+//
+// Kept byte-identical to migrations/mysql/0002_audit_append_only_trigger.up.sql,
+// and a test compares the two: a prune that restored a weaker guard than it
+// lifted would be worse than one that failed.
+// AuditNoDeleteTrigger is exported so a test can compare it with the migration.
+const AuditNoDeleteTrigger = `CREATE TRIGGER audit_log_no_delete BEFORE DELETE ON audit_log
+    FOR EACH ROW SIGNAL SQLSTATE '45000'
+    SET MESSAGE_TEXT = 'audit_log is append-only: DELETE is not permitted; to purge, DROP TRIGGER audit_log_no_delete, delete, then recreate it'`
+
+var _ store.AuditPruner = (*Store)(nil)
+
+// CountAuditBefore reports how many records a prune with this cutoff would
+// remove.
+func (s *Store) CountAuditBefore(ctx context.Context, before time.Time) (int64, error) {
+	var count int64
+
+	err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM audit_log WHERE occurred_at < ?`, before.UTC()).Scan(&count)
+
+	return count, mapError(err)
+}

@@ -509,7 +509,54 @@ func (s *auditStore) Query(_ context.Context, q store.AuditQuery) ([]*store.Audi
 	return out, nil
 }
 
+// CountAuditBefore reports how many records a prune with this cutoff would
+// remove.
+func (s *Store) CountAuditBefore(_ context.Context, before time.Time) (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	var count int64
+
+	for _, r := range s.audit {
+		if r.OccurredAt.Before(before) {
+			count++
+		}
+	}
+
+	return count, nil
+}
+
+// PruneAudit removes audit records older than a cutoff.
+//
+// There is no guard to lift here, which is exactly why this implementation
+// exists: the conformance helper runs the same assertions against all three
+// backends, and a caller must not be able to tell them apart. batch is honoured
+// only in the sense that the result is the same; there is no lock to release
+// between batches.
+func (s *Store) PruneAudit(_ context.Context, before time.Time, _ int) (store.PruneResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	kept := s.audit[:0]
+
+	var removed int64
+
+	for _, r := range s.audit {
+		if r.OccurredAt.Before(before) {
+			removed++
+			continue
+		}
+
+		kept = append(kept, r)
+	}
+
+	s.audit = kept
+
+	return store.PruneResult{Removed: removed}, nil
+}
+
 var (
+	_ store.AuditPruner     = (*Store)(nil)
 	_ store.UserStore       = (*userStore)(nil)
 	_ store.WorkspaceStore  = (*workspaceStore)(nil)
 	_ store.RepositoryStore = (*repositoryStore)(nil)

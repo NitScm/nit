@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -374,3 +375,91 @@ var (
 	_ store.ArtifactStore  = (*artifactStore)(nil)
 	_ store.AuditStore     = (*auditStore)(nil)
 )
+
+// PruneAudit removes audit records older than a cutoff.
+//
+// The append-only trigger is disabled and re-enabled inside the same
+// transaction as each batch, which is stronger than it looks: ALTER TABLE
+// takes a lock that no concurrent session can pass, and the catalog change
+// commits with the batch. So the guard is never observably off — another
+// session either sees it enabled before the batch or enabled after, never
+// absent in between. The MySQL backend cannot do this, and says so.
+//
+// The batches are separate transactions rather than one, so a year of records
+// does not hold that lock for a single statement's duration.
+func (s *Store) PruneAudit(ctx context.Context, before time.Time, batch int) (store.PruneResult, error) {
+	if batch <= 0 {
+		batch = 1000
+	}
+
+	var result store.PruneResult
+
+	for {
+		removed, err := s.pruneAuditBatch(ctx, before, batch)
+		if err != nil {
+			return result, err
+		}
+
+		result.Removed += removed
+
+		if removed < int64(batch) {
+			return result, nil
+		}
+
+		if err := ctx.Err(); err != nil {
+			return result, err
+		}
+	}
+}
+
+func (s *Store) pruneAuditBatch(ctx context.Context, before time.Time, batch int) (int64, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return 0, mapError(err)
+	}
+	defer tx.Rollback(ctx)
+
+	if _, err := tx.Exec(ctx,
+		`ALTER TABLE audit_log DISABLE TRIGGER audit_log_append_only`); err != nil {
+		return 0, fmt.Errorf("postgres: lift the append-only guard: %w", err)
+	}
+
+	// ctid rather than id: it is the physical row address, so the subquery is
+	// answered from the index scan without a second lookup, and LIMIT is what
+	// keeps a batch a batch.
+	tag, err := tx.Exec(ctx, `
+		DELETE FROM audit_log
+		WHERE ctid IN (
+			SELECT ctid FROM audit_log
+			WHERE occurred_at < $1
+			ORDER BY occurred_at
+			LIMIT $2
+		)`, before, batch)
+	if err != nil {
+		return 0, mapError(err)
+	}
+
+	if _, err := tx.Exec(ctx,
+		`ALTER TABLE audit_log ENABLE TRIGGER audit_log_append_only`); err != nil {
+		return 0, fmt.Errorf("postgres: restore the append-only guard: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return 0, mapError(err)
+	}
+
+	return tag.RowsAffected(), nil
+}
+
+var _ store.AuditPruner = (*Store)(nil)
+
+// CountAuditBefore reports how many records a prune with this cutoff would
+// remove.
+func (s *Store) CountAuditBefore(ctx context.Context, before time.Time) (int64, error) {
+	var count int64
+
+	err := s.pool.QueryRow(ctx,
+		`SELECT count(*) FROM audit_log WHERE occurred_at < $1`, before).Scan(&count)
+
+	return count, mapError(err)
+}

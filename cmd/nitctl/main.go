@@ -41,6 +41,7 @@ Usage:
   nitctl stats           [-server URL] [-token T] [-json]
   nitctl tasks           [-state S] [-kind K] [-repository R] [-limit N] [-json]
   nitctl audit           [-user U] [-repository R] [-request ID] [-since 24h] [-json]
+  nitctl audit prune     -before YYYY-MM-DD | -keep-days N [-batch 1000] [-yes]
   nitctl version
 
 Commands:
@@ -87,6 +88,14 @@ func run(args []string) error {
 
 	if args[0] == "token" {
 		return token(args[1:])
+	}
+
+	// Retention is not an operations read. It goes to the database with the
+	// operator's own credentials, because there is no endpoint that could
+	// trigger it — the server holds a store.Store and cannot reach a pruner
+	// through it.
+	if args[0] == "audit" && len(args) > 1 && args[1] == "prune" {
+		return auditPrune(args[2:])
 	}
 
 	// The operations commands read the API rather than the database, so nitctl

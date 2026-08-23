@@ -315,8 +315,14 @@ CREATE INDEX idx_artifacts_expiry ON artifacts(expires_at);
 -- AUDIT LOG
 -- ============================================================================
 
--- Append-only. This table is the product's regulatory deliverable: it is what
--- answers "who could do what, when, and under which rules?".
+-- Append-only. This table records what *happened*, which is the half git does
+-- not have.
+--
+-- It deliberately does not answer "who could do what, when, and under which
+-- rules?" — the policy bundle's git history answers that, with blame and
+-- rollback, which is why rules live in files. What only this table holds is
+-- refusals, which leave no trace on the forge because they never reached it,
+-- and deliveries, which are the evidence that a read rule was applied.
 --
 -- One row per denied path, plus one summary row per operation. Recording every
 -- allowed path of every push would multiply volume by the size of a changeset

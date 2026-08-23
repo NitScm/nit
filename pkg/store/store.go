@@ -233,9 +233,62 @@ type AuditQuery struct {
 
 // AuditStore appends to the audit log.
 //
-// There is no update and no delete: retention is an operational concern handled
-// with partitions and a privileged role, never by the application.
+// There is no update and no delete. That is not an omission: the database
+// refuses both, and an application that could delete an audit record would be
+// one bug away from erasing the evidence that it enforced anything.
+//
+// Retention is an operator action, and it has its own interface — see
+// AuditPruner, which a Store may implement and which nothing on the request
+// path may reach.
 type AuditStore interface {
 	Append(ctx context.Context, records ...*AuditRecord) error
 	Query(ctx context.Context, q AuditQuery) ([]*AuditRecord, error)
+}
+
+// AuditPruner removes audit records older than a cutoff.
+//
+// Deliberately *not* part of Store, and deliberately not reachable through
+// AuditStore. A backend that implements it exposes a capability the server and
+// the workers can never call, because they hold a Store and would have to type
+// assert their way out of the contract to find it. `nitctl audit prune` is the
+// only caller, which is what makes a purge an operator action rather than
+// something a code path can do by accident.
+//
+// An implementation carries three obligations:
+//
+//   - **It must delete only what is older than the cutoff.** The caller writes
+//     a record of the purge before starting; that record is newer than any
+//     cutoff and must survive it.
+//   - **It must restore the append-only protection it lifted**, including when
+//     the prune fails partway. On a backend where lifting it is DDL, and
+//     therefore cannot be rolled back, an interrupted prune leaves the table
+//     unprotected — which is what Result.GuardsWereMissing is for.
+//   - **It must work in batches.** A retention sweep on a year of records must
+//     not hold a lock for the length of one statement.
+type AuditPruner interface {
+	// CountAuditBefore reports how many records a prune with this cutoff would
+	// remove.
+	//
+	// Part of the interface rather than a convenience, because a tool that
+	// deletes evidence without being able to say how much is not one an
+	// operator should run: there is no undo, and "about a year's worth" is not
+	// a number anybody can approve.
+	CountAuditBefore(ctx context.Context, before time.Time) (int64, error)
+
+	// PruneAudit removes records whose occurred_at precedes before, in batches
+	// of at most batch rows, until none are left.
+	PruneAudit(ctx context.Context, before time.Time, batch int) (PruneResult, error)
+}
+
+// PruneResult reports what a purge did, and what it found.
+type PruneResult struct {
+	Removed int64
+
+	// GuardsWereMissing reports that the append-only protection was already
+	// absent when the prune began.
+	//
+	// It means a previous purge did not finish, and that the table has been
+	// writable — and erasable — since. An operator needs to be told, loudly:
+	// between those two moments, the audit trail proves nothing.
+	GuardsWereMissing bool
 }

@@ -254,12 +254,23 @@ resident.
 One primary, holding the queue, sync points and the audit trail. Read replicas
 would help the operations API and nothing else: the queue needs the primary.
 
-### `audit_log` grows without bound
+### `audit_log` grows, and now has a way to stop
 
-The table is **not partitioned** and nothing prunes it. A successful push writes
+**Fixed, as far as it needed fixing.** `nitctl audit prune` removes records
+older than a cutoff, on all three backends. It is the only thing that can: the
+server holds a `store.Store` and cannot reach `store.AuditPruner` through it, so
+no request path can delete evidence.
+
+The volume was smaller than this section once implied. A successful push writes
 two rows (`push.accepted` from the control plane, `push.applied` from the
-worker); a refused one writes `push.rejected` plus one `push.denied_path` per
-offending path. Each row is written against four indexes.
+worker); a refused one adds one `push.denied_path` per offending path, bounded
+by the *submitted changeset*. A pull writes two rows regardless of how many
+files were withheld — naming them would leak the structure the read rules exist
+to hide, and it bounds the volume as a side effect. Growth is linear in activity
+and modest.
+
+So the reason to prune is a retention period someone is obliged to honour, not
+usually disk. Each row is still written against four indexes.
 
 Emptying it is deliberately awkward, and since migration 0002 it is at least
 honest about being so. The table carries a trigger that raises:
@@ -274,26 +285,39 @@ zero and removing nothing — so an operator was told the cleanup had worked.
 That was verified against a live database, which is also how the replacement
 was checked.
 
-Purging is now a deliberate act rather than a command that appears to work:
-
-```sql
-BEGIN;
-ALTER TABLE audit_log DISABLE TRIGGER audit_log_append_only;
-ALTER TABLE audit_log DISABLE TRIGGER audit_log_append_only_truncate;
-DELETE FROM audit_log WHERE occurred_at < now() - interval '2 years';
-ALTER TABLE audit_log ENABLE TRIGGER audit_log_append_only;
-ALTER TABLE audit_log ENABLE TRIGGER audit_log_append_only_truncate;
-COMMIT;
-```
-
 The `TRUNCATE` trigger is separate because a row trigger does not see a
 `TRUNCATE` at all: without it the strongest guarantee in the schema would be
 one word away from being bypassed by accident.
 
-*The work.* Range-partition `audit_log` by `occurred_at`, monthly. `DROP TABLE`
-on an old partition is not a `DELETE`, so the rule does not block it and
-retention stops being a manual, rule-dropping procedure. This is the change that
-should happen before any deployment that has to keep records for years.
+Purging is a deliberate act rather than a command that appears to work:
+
+```sh
+nitctl audit prune -keep-days 365          # counts, deletes nothing
+nitctl audit prune -keep-days 365 -yes     # deletes, in batches
+```
+
+It writes `audit.purge_started` before and `audit.purge_completed` after, both
+naming the operator, so an interrupted purge leaves a visible trace instead of
+an unexplained gap. On PostgreSQL the guard is lifted and restored inside each
+batch's transaction — `ALTER TABLE` takes a lock no concurrent session passes,
+so the guard is never observably off. On MySQL and MariaDB dropping a trigger is
+DDL that commits immediately, so a window exists; the next prune reports it
+through `GuardsWereMissing` and closes it.
+
+*What is deliberately not done.* Range-partitioning `audit_log` by
+`occurred_at` would make a purge O(1), and it is available to an operator who
+wants it — but it is not the default and not the recommendation.
+
+`DROP PARTITION` fires no trigger, on any of the three engines. Verified against
+MariaDB 11.8 and MySQL 8.4: the rows go and nothing raises. Partitioning
+therefore converts "removing audit records requires deliberately lifting a
+guard" into "one `ALTER TABLE`" — it weakens exactly what it makes manageable.
+On MySQL and MariaDB it costs more still: both refuse foreign keys on a
+partitioned table (error 1506), so `audit_log` would give up all four of its
+own.
+
+A deployment keeping records for years and pruning monthly may well want it.
+That is a choice for whoever carries the compliance risk, taken knowingly.
 
 ### Long polling is a poll
 
@@ -328,6 +352,9 @@ the rules that could match it. Nothing about the current structure prevents it;
 
 Done, in the order they were taken:
 
+- ~~**Audit retention** (§7)~~ — `nitctl audit prune`, on all three backends,
+  recording itself as it goes. Partitioning is available to an operator and is
+  not the default, for the reason §7 gives.
 - ~~**Clone cache** (§3)~~ — a mirror per repository, a worktree per task, and
   an LRU disk budget so the mirrors cannot fill the volume.
 - ~~**Pull result cache** (§4)~~ — release-day load falls from O(users) to
@@ -335,18 +362,16 @@ Done, in the order they were taken:
 
 What remains, in priority order:
 
-1. **`audit_log` partitioning** (§7) — the only item that is a correctness and
-   compliance problem rather than a performance one.
-2. **`LISTEN`/`NOTIFY`** (§7) — cheapest, removes a per-client database load.
+1. **`LISTEN`/`NOTIFY`** (§7) — cheapest, removes a per-client database load.
    PostgreSQL only; the MySQL backend has no equivalent and keeps polling.
-3. **`partition_leases`** (§5) — removes the global lock and the dequeue scan
+2. **`partition_leases`** (§5) — removes the global lock and the dequeue scan
    together.
-4. **A shared pull cache** (§4) — only once `reused_projection` in the audit
+3. **A shared pull cache** (§4) — only once `reused_projection` in the audit
    trail shows the per-worker one missing often enough to justify a table and an
    invalidation story.
 
-Item 2 is performance. Items 1 and 3 change behaviour under load and deserve
-tests written before the change, not after.
+Item 1 is performance. Item 2 changes behaviour under load and deserves tests
+written before the change, not after.
 
 Object storage for blobs (§6) is not on this list: the seam exists, and the
 implementation belongs to the commercial edition.
