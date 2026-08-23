@@ -14,10 +14,6 @@ import (
 	"github.com/NitScm/nit/pkg/store"
 )
 
-// claimLockKey is the advisory lock every claim takes. It is an arbitrary but
-// fixed value: all nit processes sharing a database must agree on it.
-const claimLockKey = 0x6E697402 // "nit\x02"
-
 type taskStore struct{ pool *pgxpool.Pool }
 
 const taskColumns = `
@@ -176,30 +172,25 @@ func (s *taskStore) List(ctx context.Context, f store.TaskFilter) ([]*store.Task
 //
 // Correctness here is subtle enough to be worth spelling out.
 //
-// FOR UPDATE SKIP LOCKED excludes workers competing for the same *row*. It does
-// nothing for two workers picking two *different* rows of the same branch: under
-// READ COMMITTED neither transaction sees the other's uncommitted UPDATE, so
-// both pass the "is this branch busy?" test and both start pushing to the same
-// branch. A first implementation had exactly that bug; it passed every
-// sequential test and failed the concurrent one immediately.
+// **Exclusion is a unique constraint, not a lock.** A row in partition_leases
+// is the right to run a task on one branch, and its primary key is what makes
+// two workers unable to hold the same branch. The previous design serialized
+// every claim in the deployment on one advisory lock (D15) — correct, and the
+// throughput ceiling of the whole dispatch layer, because a busy repository
+// slowed the claim path for every other repository.
 //
-// The fix is an advisory lock that serializes the claim itself. Two designs
-// were possible:
+// **Two authorities, both single-row and both atomic.** The insert into
+// partition_leases decides who owns the branch. The `AND state = 'queued'` on
+// the update decides who owns the *task*, which is what keeps two workers off
+// one pull — a pull has no partition and therefore no lease. Neither depends on
+// a scan being right, which is what made FOR UPDATE SKIP LOCKED insufficient
+// here: two workers scanning concurrently lock different rows of the same
+// branch, both see no running task, and both claim it.
 //
-//   - one lock per partition, keeping claims on different branches concurrent;
-//   - one lock for the whole claim, serializing claims but nothing else.
-//
-// The per-partition version is taken here as the transaction scans candidate
-// rows, which means a worker can hold a lock on a branch it does not end up
-// claiming and block a worker that would have. That trades a correctness
-// problem for a liveness one.
-//
-// The global lock is used instead. A claim is a single indexed query and a
-// short UPDATE; serializing it costs microseconds, while the work it dispatches
-// — clone, apply, push, minutes at a time — stays fully parallel. If the claim
-// rate ever becomes the bottleneck, the per-partition scheme is the escape
-// hatch, and it needs the candidate set narrowed to one row before the lock is
-// taken.
+// **A losing worker retries rather than reporting an empty queue.** It lost a
+// race, not a search, and the retry now sees the winner's lease and skips that
+// partition. Bounded, because a worker that has lost several times in a row is
+// better off polling than spinning.
 //
 // Expired leases are reclaimed first, in the same transaction, so a worker that
 // died mid-task cannot strand its branch until some separate reaper happens to
@@ -215,40 +206,89 @@ func (s *taskStore) Claim(ctx context.Context, opts store.ClaimOptions) (*store.
 		leaseFor = time.Minute
 	}
 
+	for range claimAttempts {
+		task, err := s.claimOnce(ctx, opts, now, leaseFor)
+		if errors.Is(err, errLostTheRace) {
+			continue
+		}
+
+		return task, err
+	}
+
+	// Contended past the retry budget. Reporting no task is honest — this
+	// worker has none *right now* — and it polls again in queue.poll.
+	return nil, store.ErrNoTask
+}
+
+// claimAttempts bounds the retries a contended claim makes.
+//
+// Small on purpose. Each retry is a fresh transaction, so a worker that keeps
+// losing is burning a connection on a queue that other workers are draining
+// faster than it can. Polling again in a second is the cheaper answer.
+const claimAttempts = 5
+
+// errLostTheRace is internal: another worker took the branch or the task
+// between this transaction's read and its write.
+var errLostTheRace = errors.New("postgres: lost the claim race")
+
+func (s *taskStore) claimOnce(ctx context.Context, opts store.ClaimOptions, now time.Time, leaseFor time.Duration) (*store.Task, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return nil, mapError(err)
 	}
 	defer tx.Rollback(ctx)
 
-	// Serializes the claim, and only the claim: released at commit, well before
-	// the dispatched task does any work.
-	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, claimLockKey); err != nil {
-		return nil, mapError(err)
-	}
-
 	if _, err := releaseExpired(ctx, tx, now); err != nil {
 		return nil, err
 	}
 
+	var (
+		id           string
+		tenant       string
+		partitionKey *string
+	)
+
+	// A left join rather than the old correlated subquery over tasks. The
+	// previous form asked "is anything running on this partition?" for every
+	// candidate, so a queue whose head is full of busy branches was walked past
+	// on every single claim.
+	err = tx.QueryRow(ctx, `
+		SELECT t.id::text, t.tenant_id, t.partition_key
+		FROM tasks t
+		LEFT JOIN partition_leases l
+		  ON l.tenant_id = t.tenant_id AND l.partition_key = t.partition_key
+		WHERE t.state = 'queued'
+		  AND ($1::task_kind[] IS NULL OR t.kind = ANY($1::task_kind[]))
+		  AND l.partition_key IS NULL
+		ORDER BY t.created_at, t.id
+		LIMIT 1`, kindArray(opts.Kinds)).Scan(&id, &tenant, &partitionKey)
+
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, store.ErrNoTask
+	}
+	if err != nil {
+		return nil, mapError(err)
+	}
+
+	if partitionKey != nil {
+		// The authority on who owns the branch. ON CONFLICT DO NOTHING makes
+		// losing cheap and unambiguous: no rows, no error, try another task.
+		tag, err := tx.Exec(ctx, `
+			INSERT INTO partition_leases (tenant_id, partition_key, task_id, acquired_at)
+			VALUES ($1, $2, $3::uuid, $4)
+			ON CONFLICT DO NOTHING`, tenant, *partitionKey, id, now)
+		if err != nil {
+			return nil, mapError(err)
+		}
+
+		if tag.RowsAffected() == 0 {
+			return nil, errLostTheRace
+		}
+	}
+
+	// The authority on who owns the task. It matters for pulls, which have no
+	// partition and therefore no lease of their own.
 	task, err := scanTask(tx.QueryRow(ctx, `
-		WITH next AS (
-			SELECT t.id
-			FROM tasks t
-			WHERE t.state = 'queued'
-			  AND ($1::task_kind[] IS NULL OR t.kind = ANY($1::task_kind[]))
-			  AND (
-			      t.partition_key IS NULL
-			      OR NOT EXISTS (
-			          SELECT 1 FROM tasks busy
-			          WHERE busy.partition_key = t.partition_key
-			            AND busy.state = 'running'
-			      )
-			  )
-			ORDER BY t.created_at, t.id
-			LIMIT 1
-			FOR UPDATE SKIP LOCKED
-		)
 		UPDATE tasks
 		SET state = 'running',
 		    attempts = attempts + 1,
@@ -257,12 +297,12 @@ func (s *taskStore) Claim(ctx context.Context, opts store.ClaimOptions) (*store.
 		    lease_expires_at = $3,
 		    started_at = COALESCE(started_at, $4),
 		    updated_at = $4
-		WHERE id IN (SELECT id FROM next)
+		WHERE id = $1::uuid AND state = 'queued'
 		RETURNING `+taskColumns,
-		kindArray(opts.Kinds), opts.Holder, now.Add(leaseFor), now))
+		id, opts.Holder, now.Add(leaseFor), now))
 
 	if errors.Is(err, store.ErrNotFound) {
-		return nil, store.ErrNoTask
+		return nil, errLostTheRace
 	}
 	if err != nil {
 		return nil, err
@@ -293,7 +333,7 @@ func (s *taskStore) Complete(ctx context.Context, id store.ID, token string, res
 		result = []byte(`{}`)
 	}
 
-	tag, err := s.pool.Exec(ctx, `
+	return s.finish(ctx, id, token, `
 		UPDATE tasks
 		SET state = 'succeeded',
 		    result = $3,
@@ -301,12 +341,7 @@ func (s *taskStore) Complete(ctx context.Context, id store.ID, token string, res
 		    lease_holder = NULL, lease_token = NULL, lease_expires_at = NULL,
 		    updated_at = $4, finished_at = $4
 		WHERE id = $1::uuid AND state = 'running' AND lease_token = $2`,
-		string(id), token, result, at)
-	if err != nil {
-		return mapError(err)
-	}
-
-	return leaseResult(ctx, s.pool, id, tag.RowsAffected())
+		result, at)
 }
 
 func (s *taskStore) Fail(ctx context.Context, id store.ID, token string, cause *protocol.Error, requeue bool, at time.Time) error {
@@ -341,12 +376,49 @@ func (s *taskStore) Fail(ctx context.Context, id store.ID, token string, cause *
 			WHERE id = $1::uuid AND state = 'running' AND lease_token = $2`
 	}
 
-	tag, err := s.pool.Exec(ctx, query, string(id), token, causeJSON, at)
+	return s.finish(ctx, id, token, query, causeJSON, at)
+}
+
+// finish applies a transition out of running and releases the branch with it.
+//
+// One transaction, and that is the point: a task that stopped running while its
+// partition lease survived would block its branch for good, and a lease removed
+// while the task kept running would let a second worker onto it. Neither is
+// recoverable by anything watching from outside, so they commit together or
+// not at all.
+func (s *taskStore) finish(ctx context.Context, id store.ID, token, query string, payload []byte, at time.Time) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return mapError(err)
+	}
+	defer tx.Rollback(ctx)
+
+	// The lease goes first, matching the order a claim uses: partition_leases,
+	// then tasks. Two transactions taking the same two rows in opposite orders
+	// is a deadlock waiting for load, and MySQL found it under twelve workers
+	// before this was made symmetric.
+	//
+	// Deleting before knowing whether the transition applies is safe because
+	// this is a transaction: a stale token leaves the UPDATE matching nothing
+	// and the rollback puts the lease back. Someone else's branch is never
+	// taken from them.
+	if _, err := tx.Exec(ctx,
+		`DELETE FROM partition_leases WHERE task_id = $1::uuid`, string(id)); err != nil {
+		return mapError(err)
+	}
+
+	tag, err := tx.Exec(ctx, query, string(id), token, payload, at)
 	if err != nil {
 		return mapError(err)
 	}
 
-	return leaseResult(ctx, s.pool, id, tag.RowsAffected())
+	if tag.RowsAffected() != 1 {
+		// Nothing moved: the task is gone, or somebody else holds it now. The
+		// rollback restores the lease, which is theirs.
+		return leaseResult(ctx, s.pool, id, tag.RowsAffected())
+	}
+
+	return mapError(tx.Commit(ctx))
 }
 
 func (s *taskStore) ReleaseExpired(ctx context.Context, now time.Time) (int, error) {
@@ -369,6 +441,18 @@ func (s *taskStore) ReleaseExpired(ctx context.Context, now time.Time) (int, err
 }
 
 func releaseExpired(ctx context.Context, tx pgx.Tx, now time.Time) (int, error) {
+	// The branch is freed with the task, in the same transaction. A worker that
+	// died holding a lease must not keep its branch: that is the whole reason
+	// leases expire, and leaving the row behind would turn a crashed worker
+	// into a permanently blocked branch.
+	if _, err := tx.Exec(ctx, `
+		DELETE FROM partition_leases
+		WHERE task_id IN (
+			SELECT id FROM tasks WHERE state = 'running' AND lease_expires_at <= $1
+		)`, now); err != nil {
+		return 0, mapError(err)
+	}
+
 	tag, err := tx.Exec(ctx, `
 		UPDATE tasks
 		SET state = 'queued',

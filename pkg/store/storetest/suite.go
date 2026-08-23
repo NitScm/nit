@@ -49,6 +49,98 @@ func Run(t *testing.T, newStore Factory) {
 	t.Run("ConcurrentDrain", func(t *testing.T) { testConcurrentDrain(t, newStore) })
 	t.Run("CompletionCannotPrecedeStart", func(t *testing.T) { testCompletionCannotPrecedeStart(t, newStore) })
 	t.Run("Sessions", func(t *testing.T) { testSessions(t, newStore) })
+	t.Run("ABranchIsFreedByEveryExitFromRunning", func(t *testing.T) {
+		testBranchIsFreedOnEveryExit(t, newStore)
+	})
+}
+
+// Every way a task stops running has to free its branch.
+//
+// Partition exclusion is what makes a push atomic with respect to other pushes,
+// and a backend that implements it with a row — a lease, a lock table, a
+// semaphore — has as many chances to leak that row as there are ways out of the
+// running state. A leaked one does not fail: it blocks that branch silently,
+// for every developer, until somebody looks in the database.
+//
+// So each exit is walked and the branch re-claimed after it. The suite already
+// covers the transitions themselves; this covers what they must release.
+func testBranchIsFreedOnEveryExit(t *testing.T, newStore Factory) {
+	for _, tc := range []struct {
+		name    string
+		release func(t *testing.T, f *fixture, ctx context.Context, task *store.Task)
+	}{
+		{
+			name: "complete",
+			release: func(t *testing.T, f *fixture, ctx context.Context, task *store.Task) {
+				if err := f.store.Tasks().Complete(ctx, task.ID, task.Lease.Token,
+					[]byte(`{}`), f.now.Add(time.Minute)); err != nil {
+					t.Fatalf("Complete: %v", err)
+				}
+			},
+		},
+		{
+			name: "fail",
+			release: func(t *testing.T, f *fixture, ctx context.Context, task *store.Task) {
+				if err := f.store.Tasks().Fail(ctx, task.ID, task.Lease.Token,
+					&protocol.Error{Code: "boom"}, false, f.now.Add(time.Minute)); err != nil {
+					t.Fatalf("Fail: %v", err)
+				}
+			},
+		},
+		{
+			name: "requeue",
+			release: func(t *testing.T, f *fixture, ctx context.Context, task *store.Task) {
+				if err := f.store.Tasks().Fail(ctx, task.ID, task.Lease.Token,
+					&protocol.Error{Code: "retry"}, true, f.now.Add(time.Minute)); err != nil {
+					t.Fatalf("Fail: %v", err)
+				}
+			},
+		},
+		{
+			name: "lease expiry",
+			release: func(t *testing.T, f *fixture, ctx context.Context, task *store.Task) {
+				if _, err := f.store.Tasks().ReleaseExpired(ctx, f.now.Add(time.Hour)); err != nil {
+					t.Fatalf("ReleaseExpired: %v", err)
+				}
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := setup(t, newStore)
+			ctx := context.Background()
+
+			first := f.create(t, f.newTask(protocol.TaskPush, "main", "req-1", 0))
+			second := f.create(t, f.newTask(protocol.TaskPush, "main", "req-2", time.Second))
+
+			claimed, err := f.claim(t, "worker-1", f.now)
+			if err != nil {
+				t.Fatalf("Claim: %v", err)
+			}
+			if claimed.ID != first.ID {
+				t.Fatalf("claimed %s, want the first task", claimed.ID)
+			}
+
+			// The branch is busy: the second task must not be claimable yet.
+			if _, err := f.claim(t, "worker-2", f.now); !errors.Is(err, store.ErrNoTask) {
+				t.Fatalf("a second task on a busy branch was claimable: %v", err)
+			}
+
+			tc.release(t, f, ctx, claimed)
+
+			// And now it must be, or the branch is stranded.
+			next, err := f.claim(t, "worker-2", f.now.Add(2*time.Hour))
+			if err != nil {
+				t.Fatalf("the branch was not freed by %s: %v", tc.name, err)
+			}
+
+			// After a requeue or an expiry the first task returns to the queue
+			// and is the oldest, so either it or the second is correct — what
+			// matters is that *something* on the branch became claimable.
+			if next.ID != first.ID && next.ID != second.ID {
+				t.Errorf("claimed %s, which is neither task on the branch", next.ID)
+			}
+		})
+	}
 }
 
 func testSessions(t *testing.T, newStore Factory) {

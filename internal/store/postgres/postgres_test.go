@@ -66,7 +66,7 @@ func freshStore(dsn string) storetest.Factory {
 		}
 
 		_, err = s.Pool().Exec(ctx, `
-			TRUNCATE audit_log, artifacts, tasks, sync_points,
+			TRUNCATE audit_log, artifacts, partition_leases, tasks, sync_points,
 			         repositories, workspaces, sessions, users
 			RESTART IDENTITY CASCADE`)
 		if err != nil {

@@ -1082,3 +1082,57 @@ produces a client that hangs for a full interval on exactly one transition.
 same version numbers, so `nitctl migrate -status` describes one schema rather
 than two. The file says what cannot be done and why, instead of being absent and
 leaving a reader to wonder.
+
+---
+
+## D41 — Branch exclusion is a unique constraint, not a lock. Supersedes D15.
+
+**Decision.** A row in `partition_leases`, keyed `(tenant_id, partition_key)`,
+is the right to run a task on one branch. A claim inserts it; every exit from
+running deletes it. The global advisory lock of D15 — and MySQL's `GET_LOCK` —
+are gone.
+
+**Why D15 existed, and why it can go.** `FOR UPDATE SKIP LOCKED` does not give
+partition exclusion: two workers scanning concurrently lock *different rows of
+the same branch*, both see nothing running on it, and both claim it. D15 took a
+global lock instead, knowingly, and it was the throughput ceiling of the whole
+dispatch layer — a busy repository slowed the claim path for every other
+repository.
+
+A unique constraint answers the same question without serializing anything else.
+Two workers racing for one branch both insert; one wins, and the loser retries
+with another task rather than waiting behind it.
+
+**Two authorities, and the second is not decoration.** The insert decides who
+owns the branch. `AND state = 'queued'` on the update decides who owns the
+*task* — which is what keeps two workers off a single pull, since pulls have no
+partition and take no lease. Neither depends on a scan being right.
+
+**A losing worker retries, five times, then reports no task.** It lost a race,
+not a search, and each retry sees the winner's lease and skips that partition.
+Bounded because a worker that keeps losing is burning a connection on a queue
+others are draining faster than it can; polling again in a second is cheaper.
+
+**The dequeue scan went with the lock.** Exclusion is a left join against
+`partition_leases` instead of `NOT EXISTS (SELECT 1 FROM tasks busy …)`, so a
+queue whose head is full of busy branches is no longer walked past on every
+claim — the cost that grew with queue depth × busy partitions, which is exactly
+what a serialized branch produces.
+
+**Every exit from running frees the branch, transactionally.** Complete, fail,
+requeue and lease expiry. A lease outliving its task blocks that branch silently
+until a human looks in the database, so this is a conformance assertion — the
+suite walks all four exits and re-claims after each. Removing either release
+makes it fail, which was verified by removing them.
+
+**One lock order everywhere: `partition_leases`, then `tasks`.** The first
+version wrote them the other way round in the finishing transitions, and InnoDB
+found it immediately — twelve workers draining thirty tasks lost three to
+"Deadlock found when trying to get lock". This is the second deadlock in this
+codebase caused by two paths agreeing on what to lock and not on the order, and
+the lesson is now written where both implementations can see it.
+
+**Migrating a live deployment backfills.** Tasks already running when the
+migration lands would otherwise look like free branches to the first claim
+afterwards — two workers on one branch, caused by the change that exists to
+prevent that.

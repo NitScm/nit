@@ -91,7 +91,7 @@ func reset(t *testing.T, ctx context.Context, db *sql.DB) {
 	}
 
 	for _, table := range []string{
-		"audit_log", "artifacts", "tasks", "sync_points",
+		"audit_log", "artifacts", "partition_leases", "tasks", "sync_points",
 		"repositories", "workspaces", "sessions", "users",
 	} {
 		if _, err := conn.ExecContext(ctx, `TRUNCATE TABLE `+table); err != nil {

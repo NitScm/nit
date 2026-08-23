@@ -172,7 +172,42 @@ nit-worker -queues=pull -concurrency=4
 
 ---
 
-## 5. The claim path takes a global lock
+## 5. The claim path used to take a global lock
+
+**Fixed.** Exclusion is a unique constraint now, not a lock. A row in
+`partition_leases` is the right to run a task on one branch, its primary key is
+`(tenant_id, partition_key)`, and two workers racing for the same branch both
+try to insert it — the constraint decides, the loser picks another task.
+Contention is per-branch, and two repositories no longer wait for each other at
+all.
+
+The dequeue scan went with it: exclusion is a left join against that table
+rather than a correlated subquery over `tasks`, so a queue whose head is full of
+busy branches is no longer walked past on every claim.
+
+**Two authorities, both single-row and both atomic.** The insert decides who
+owns the branch; `AND state = 'queued'` on the update decides who owns the
+*task*, which is what keeps two workers off one pull — a pull has no partition
+and therefore no lease. Neither depends on a scan being right, which is what
+made `FOR UPDATE SKIP LOCKED` insufficient in the first place.
+
+**A losing worker retries**, up to five times, rather than reporting an empty
+queue: it lost a race, not a search, and the retry sees the winner's lease.
+
+**Every exit from running frees the branch**, in the same transaction as the
+state change — complete, fail, requeue, lease expiry. A lease that outlived its
+task would block that branch silently until somebody looked in the database, so
+`storetest` walks all four exits and re-claims after each. Removing either
+release makes it fail; that was checked by removing them.
+
+**And the lock order is the same everywhere**: `partition_leases` first, then
+`tasks`. The first version wrote them the other way round in the finishing
+transitions, which gave InnoDB two transactions taking the same rows in opposite
+orders — twelve workers draining thirty tasks lost three of them to a deadlock.
+
+*What follows is the original note, kept because the reasoning is what mattered.*
+
+### The original note
 
 ```go
 // internal/store/postgres/tasks.go
@@ -378,6 +413,8 @@ the rules that could match it. Nothing about the current structure prevents it;
 
 Done, in the order they were taken:
 
+- ~~**`partition_leases`** (§5)~~ — branch exclusion is a unique constraint, so
+  two repositories no longer serialize against each other.
 - ~~**`LISTEN`/`NOTIFY`** (§7)~~ — PostgreSQL wakes a waiting client instead of
   being asked twice a second. MySQL keeps polling, and says so.
 - ~~**Audit retention** (§7)~~ — `nitctl audit prune`, on all three backends,
@@ -390,14 +427,13 @@ Done, in the order they were taken:
 
 What remains, in priority order:
 
-1. **`partition_leases`** (§5) — removes the global lock and the dequeue scan
-   together.
-2. **A shared pull cache** (§4) — only once `reused_projection` in the audit
+1. **A shared pull cache** (§4) — only once `reused_projection` in the audit
    trail shows the per-worker one missing often enough to justify a table and an
    invalidation story.
 
-Item 1 changes behaviour under load and deserves tests written before the
-change, not after.
+Nothing else on this list is load-bearing today. What remains in the document is
+either done, deliberately declined (partitioning `audit_log`, see D37), or
+waiting on evidence rather than on effort.
 
 Object storage for blobs (§6) is not on this list: the seam exists, and the
 implementation belongs to the commercial edition.

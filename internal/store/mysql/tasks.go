@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"strings"
 	"time"
 
@@ -15,19 +14,6 @@ import (
 	"github.com/NitScm/nit/pkg/protocol"
 	"github.com/NitScm/nit/pkg/store"
 )
-
-// claimLock is the name every claim serializes on.
-//
-// Scoped to the database rather than fixed, because GET_LOCK names are
-// server-wide: two nit databases on one MySQL server would otherwise serialize
-// each other's queues for no reason, and the symptom would be a slow queue with
-// nothing in the slow query log.
-const claimLock = `CONCAT(DATABASE(), ':nit:claim')`
-
-// lockWait is how long a claim waits for the lock before giving up. Long enough
-// that a busy queue does not spuriously report an empty one, short enough that
-// a wedged session is visible rather than hanging a worker forever.
-const lockWait = 10
 
 type taskStore struct{ db *sql.DB }
 
@@ -231,28 +217,24 @@ func (s *taskStore) List(ctx context.Context, f store.TaskFilter) ([]*store.Task
 // Claim atomically dequeues and leases the next dispatchable task.
 //
 // The correctness argument is the one in the PostgreSQL implementation, and it
-// is worth reading there first: SKIP LOCKED excludes workers competing for the
-// same *row* and does nothing for two workers picking two *different* rows of
-// the same branch, so a lock around the claim itself is what makes partition
-// exclusion hold. A global lock is used rather than one per partition, because
-// serializing a short indexed query costs microseconds while the work it
-// dispatches stays fully parallel.
+// is the same argument here because the mechanism is the same: **exclusion is a
+// unique constraint, not a lock.** A row in partition_leases is the right to
+// run a task on one branch, and its primary key is what stops two workers
+// holding it.
 //
-// Three things differ here, and each is forced by the engine.
+// That removed the two things this backend used to need. There is no GET_LOCK,
+// so no session-level lock whose release had to be ordered by hand after the
+// commit — the subtlety that made the previous version worth a long comment.
+// And there is no FOR UPDATE SKIP LOCKED, so the difference between MySQL and
+// MariaDB over `FOR UPDATE OF` stopped mattering.
 //
-// The lock is GET_LOCK, which is held by the *session*, not the transaction.
-// PostgreSQL's pg_advisory_xact_lock is released by the commit itself, in the
-// right order, for free. Here the order has to be arranged by hand, and getting
-// it wrong is not a slow queue but a double claim — see below.
+// Two authorities remain, both single-row and both atomic: the insert into
+// partition_leases decides who owns the branch, and `AND state = 'queued'` on
+// the update decides who owns the task — which is what keeps two workers off
+// one pull, since a pull has no partition and therefore no lease.
 //
-// The claim runs on a dedicated connection. database/sql hands a transaction a
-// connection and takes it back at commit, so a lock taken on "the connection"
-// outside the transaction has no way to be released on the same one afterwards.
-//
-// The transaction is READ COMMITTED, not MySQL's REPEATABLE READ default. Under
-// REPEATABLE READ every statement in the claim reads the snapshot taken at the
-// first one, so the busy-partition test could be answered from a view of the
-// world that predates a task another worker started.
+// A losing worker retries rather than reporting an empty queue: it lost a race,
+// not a search, and the retry sees the winner's lease and skips that partition.
 func (s *taskStore) Claim(ctx context.Context, opts store.ClaimOptions) (*store.Task, error) {
 	now := opts.Now
 	if now.IsZero() {
@@ -264,45 +246,45 @@ func (s *taskStore) Claim(ctx context.Context, opts store.ClaimOptions) (*store.
 		leaseFor = time.Minute
 	}
 
-	conn, err := s.db.Conn(ctx)
-	if err != nil {
-		return nil, mapError(err)
-	}
-	defer conn.Close()
+	for range claimAttempts {
+		var task *store.Task
 
-	if err := acquireLock(ctx, conn); err != nil {
-		return nil, err
-	}
+		err := retryOnDeadlock(func() error {
+			claimed, err := s.claimOnce(ctx, opts, now, leaseFor)
+			if err != nil {
+				return err
+			}
 
-	// Deliberately not deferred alongside the commit: the lock must outlive it.
-	// If it were released first, another session could take the lock and open
-	// its transaction before this one's UPDATE became visible — and would then
-	// find the partition idle and claim a second task on the same branch. That
-	// is the bug the lock exists to prevent, reintroduced by the order of two
-	// lines.
-	defer releaseLock(context.WithoutCancel(ctx), conn)
+			task = claimed
 
-	var task *store.Task
+			return nil
+		})
 
-	err = retryOnDeadlock(func() error {
-		claimed, err := s.claimLocked(ctx, conn, opts, now, leaseFor)
-		if err != nil {
-			return err
+		if errors.Is(err, errLostTheRace) {
+			continue
 		}
 
-		task = claimed
-
-		return nil
-	})
-	if err != nil {
-		return nil, err
+		return task, err
 	}
 
-	return task, nil
+	// Contended past the retry budget. Reporting no task is honest — this
+	// worker has none right now — and it polls again in queue.poll.
+	return nil, store.ErrNoTask
 }
 
-func (s *taskStore) claimLocked(ctx context.Context, conn *sql.Conn, opts store.ClaimOptions, now time.Time, leaseFor time.Duration) (*store.Task, error) {
-	tx, err := conn.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
+// claimAttempts bounds the retries a contended claim makes.
+const claimAttempts = 5
+
+// errLostTheRace is internal: another worker took the branch or the task
+// between this transaction's read and its write.
+var errLostTheRace = errors.New("mysql: lost the claim race")
+
+func (s *taskStore) claimOnce(ctx context.Context, opts store.ClaimOptions, now time.Time, leaseFor time.Duration) (*store.Task, error) {
+	// READ COMMITTED, not MySQL's REPEATABLE READ default: every statement here
+	// must see what other workers have committed, or the candidate query is
+	// answered from a view of the world that predates the lease that would have
+	// excluded it.
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
 	if err != nil {
 		return nil, mapError(err)
 	}
@@ -312,13 +294,7 @@ func (s *taskStore) claimLocked(ctx context.Context, conn *sql.Conn, opts store.
 		return nil, err
 	}
 
-	// A plain SELECT, with no locking clause. FOR UPDATE SKIP LOCKED would be
-	// the direct translation, but MySQL applies the locking clause to every
-	// table in the statement including the busy-partition subquery, and
-	// MariaDB has no FOR UPDATE OF to narrow it. Skipping a locked *running*
-	// row would make the partition look idle. Under the claim lock no other
-	// claim can interleave, so no row lock is needed to get this right.
-	where := []string{"t.state = 'queued'"}
+	where := []string{"t.state = 'queued'", "l.partition_key IS NULL"}
 	args := []any{}
 
 	if len(opts.Kinds) > 0 {
@@ -328,22 +304,23 @@ func (s *taskStore) claimLocked(ctx context.Context, conn *sql.Conn, opts store.
 		}
 	}
 
-	var id string
+	var (
+		id           string
+		tenant       string
+		partitionKey sql.NullString
+	)
 
+	// A left join rather than the old correlated subquery over tasks, which
+	// asked "is anything running on this partition?" for every candidate and so
+	// walked past a queue full of busy branches on every claim.
 	err = tx.QueryRowContext(ctx, `
-		SELECT t.id
+		SELECT t.id, t.tenant_id, t.partition_key
 		FROM tasks t
+		LEFT JOIN partition_leases l
+		  ON l.tenant_id = t.tenant_id AND l.partition_key = t.partition_key
 		WHERE `+strings.Join(where, " AND ")+`
-		  AND (
-		      t.partition_key IS NULL
-		      OR NOT EXISTS (
-		          SELECT 1 FROM tasks busy
-		          WHERE busy.partition_key = t.partition_key
-		            AND busy.state = 'running'
-		      )
-		  )
 		ORDER BY t.created_at, t.id
-		LIMIT 1`, args...).Scan(&id)
+		LIMIT 1`, args...).Scan(&id, &tenant, &partitionKey)
 
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, store.ErrNoTask
@@ -352,6 +329,29 @@ func (s *taskStore) claimLocked(ctx context.Context, conn *sql.Conn, opts store.
 		return nil, mapError(err)
 	}
 
+	if partitionKey.Valid {
+		// INSERT IGNORE is the authority on who owns the branch. It downgrades
+		// more than duplicate keys — a bad foreign key would also become a
+		// warning — but every column here was just read out of the row being
+		// claimed, so the only conflict available is the one being tested for.
+		result, err := tx.ExecContext(ctx, `
+			INSERT IGNORE INTO partition_leases (tenant_id, partition_key, task_id, acquired_at)
+			VALUES (?, ?, ?, ?)`, tenant, partitionKey.String, id, now.UTC())
+		if err != nil {
+			return nil, mapError(err)
+		}
+
+		taken, err := result.RowsAffected()
+		if err != nil {
+			return nil, mapError(err)
+		}
+
+		if taken == 0 {
+			return nil, errLostTheRace
+		}
+	}
+
+	// The authority on who owns the task, which is what a pull relies on.
 	result, err := tx.ExecContext(ctx, `
 		UPDATE tasks
 		SET state = 'running',
@@ -371,10 +371,9 @@ func (s *taskStore) claimLocked(ctx context.Context, conn *sql.Conn, opts store.
 	if err != nil {
 		return nil, mapError(err)
 	}
+
 	if affected == 0 {
-		// Nothing else can have taken it while the lock is held, so this means
-		// the row left the queue by another route — cancelled, most likely.
-		return nil, store.ErrNoTask
+		return nil, errLostTheRace
 	}
 
 	task, err := scanTask(tx.QueryRowContext(ctx,
@@ -388,32 +387,6 @@ func (s *taskStore) claimLocked(ctx context.Context, conn *sql.Conn, opts store.
 	}
 
 	return task, nil
-}
-
-// acquireLock takes the claim lock, distinguishing a timeout from a failure.
-func acquireLock(ctx context.Context, conn *sql.Conn) error {
-	var got sql.NullInt64
-
-	if err := conn.QueryRowContext(ctx,
-		`SELECT GET_LOCK(`+claimLock+`, ?)`, lockWait).Scan(&got); err != nil {
-		return mapError(err)
-	}
-
-	if !got.Valid {
-		return fmt.Errorf("mysql: claim lock: the server refused the request")
-	}
-	if got.Int64 != 1 {
-		return fmt.Errorf("mysql: claim lock: not acquired within %ds; another session is holding it", lockWait)
-	}
-
-	return nil
-}
-
-func releaseLock(ctx context.Context, conn *sql.Conn) {
-	// The result is deliberately ignored: the lock is released by the session
-	// ending in any case, and a failure here has no recovery a caller could
-	// perform.
-	_, _ = conn.ExecContext(ctx, `DO RELEASE_LOCK(`+claimLock+`)`)
 }
 
 func (s *taskStore) Heartbeat(ctx context.Context, id store.ID, token string, until time.Time) error {
@@ -442,7 +415,7 @@ func (s *taskStore) complete(ctx context.Context, id store.ID, token string, res
 		result = []byte(`{}`)
 	}
 
-	updated, err := s.db.ExecContext(ctx, `
+	return s.finish(ctx, id, `
 		UPDATE tasks
 		SET state = 'succeeded',
 		    result = ?,
@@ -451,11 +424,53 @@ func (s *taskStore) complete(ctx context.Context, id store.ID, token string, res
 		    updated_at = ?, finished_at = ?
 		WHERE id = ? AND state = 'running' AND lease_token = ?`,
 		result, at.UTC(), at.UTC(), string(id), token)
+}
+
+// finish applies a transition out of running and releases the branch with it.
+//
+// One transaction, and that is the point: a task that stopped running while its
+// partition lease survived would block its branch for good, and a lease removed
+// while the task kept running would let a second worker onto it. Neither is
+// recoverable from outside, so they commit together or not at all.
+func (s *taskStore) finish(ctx context.Context, id store.ID, query string, args ...any) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return mapError(err)
+	}
+	defer tx.Rollback()
+
+	// The lease goes first, and the order is not cosmetic: a claim writes
+	// partition_leases before tasks, so a finish that wrote tasks first would
+	// give InnoDB two transactions taking the same two rows in opposite orders.
+	// That is a deadlock, and it was one — 30 tasks drained by 12 workers,
+	// three of them lost to "Deadlock found when trying to get lock".
+	//
+	// Deleting before knowing whether the transition applies is safe because
+	// this is a transaction: a stale token leaves the UPDATE matching nothing
+	// and the rollback puts the lease back. Someone else's branch is never
+	// taken from them.
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM partition_leases WHERE task_id = ?`, string(id)); err != nil {
+		return mapError(err)
+	}
+
+	updated, err := tx.ExecContext(ctx, query, args...)
 	if err != nil {
 		return mapError(err)
 	}
 
-	return s.leaseResult(ctx, id, updated)
+	affected, err := updated.RowsAffected()
+	if err != nil {
+		return mapError(err)
+	}
+
+	if affected != 1 {
+		// Nothing moved: the task is gone, or somebody else holds it now. The
+		// rollback restores the lease, which is theirs.
+		return s.leaseResult(ctx, id, updated)
+	}
+
+	return mapError(tx.Commit())
 }
 
 func (s *taskStore) Fail(ctx context.Context, id store.ID, token string, cause *protocol.Error, requeue bool, at time.Time) error {
@@ -494,21 +509,11 @@ func (s *taskStore) fail(ctx context.Context, id store.ID, token string, cause *
 			WHERE id = ? AND state = 'running' AND lease_token = ?`
 	}
 
-	var (
-		updated sql.Result
-		err     error
-	)
-
 	if requeue {
-		updated, err = s.db.ExecContext(ctx, query, nullJSON(causeJSON), at.UTC(), string(id), token)
-	} else {
-		updated, err = s.db.ExecContext(ctx, query, nullJSON(causeJSON), at.UTC(), at.UTC(), string(id), token)
-	}
-	if err != nil {
-		return mapError(err)
+		return s.finish(ctx, id, query, nullJSON(causeJSON), at.UTC(), string(id), token)
 	}
 
-	return s.leaseResult(ctx, id, updated)
+	return s.finish(ctx, id, query, nullJSON(causeJSON), at.UTC(), at.UTC(), string(id), token)
 }
 
 func (s *taskStore) ReleaseExpired(ctx context.Context, now time.Time) (int, error) {
@@ -584,6 +589,19 @@ func releaseExpired(ctx context.Context, tx *sql.Tx, now time.Time) (int, error)
 	}
 	if len(ids) == 0 {
 		return 0, nil
+	}
+
+	// The branch is freed with the task, and before it: a claim writes
+	// partition_leases before tasks, and every path has to agree on that order
+	// or InnoDB has a cycle to find.
+	//
+	// A worker that died holding a lease must not keep its branch — that is the
+	// whole reason leases expire, and leaving the row behind turns a crashed
+	// worker into a permanently blocked branch.
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM partition_leases WHERE task_id IN (`+inPlaceholders(len(ids))+`)`,
+		ids...); err != nil {
+		return 0, mapError(err)
 	}
 
 	args := append([]any{now.UTC()}, ids...)
