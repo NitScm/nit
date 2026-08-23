@@ -79,7 +79,10 @@ func (w *Worker) handlePush(ctx context.Context, task *store.Task) ([]byte, erro
 	rebased := false
 
 	if tipBefore != spec.BaseCommit {
-		if err := repo.Rebase(ctx, tipBefore); err != nil {
+		if err := repo.Rebase(ctx, tipBefore, gitx.Author{
+			Name:  spec.AuthorName,
+			Email: spec.AuthorEmail,
+		}); err != nil {
 			if errors.Is(err, gitx.ErrConflict) {
 				return nil, permanent(protocol.CodeConflict,
 					"%s moved while your push was queued and your change no longer applies; pull, resolve, and push again",

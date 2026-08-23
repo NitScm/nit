@@ -611,6 +611,20 @@ func TestTrailersSurviveARebase(t *testing.T) {
 	if got != "task-1" {
 		t.Errorf("Nit-Task = %q after a rebase", got)
 	}
+
+	// A rebase rewrites commits, and only the author line survives it. Without
+	// an explicit committer the identity stamped here is whoever ran the
+	// worker, which quietly breaks the guarantee that a commit is authored and
+	// committed as the authenticated user (D19) on every push that happens to
+	// queue behind another one.
+	for _, want := range []struct{ format, value string }{
+		{"%an <%ae>", "dev <dev@example.com>"},
+		{"%cn <%ce>", "dev <dev@example.com>"},
+	} {
+		if got := git(t, h.upstream, "log", "-1", "--format="+want.format, "refs/heads/main"); got != want.value {
+			t.Errorf("%s = %q, want %q", want.format, got, want.value)
+		}
+	}
 }
 
 func TestPushCompressedPatch(t *testing.T) {

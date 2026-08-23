@@ -211,19 +211,54 @@ func (r *execRepo) Apply(ctx context.Context, patch []byte, opts ApplyOptions) e
 }
 
 // Rebase replays the current branch onto another commit.
-func (r *execRepo) Rebase(ctx context.Context, onto string) error {
-	_, err := r.git.run(ctx, r.dir, "rebase", onto)
+func (r *execRepo) Rebase(ctx context.Context, onto string, committer Author) error {
+	// A rebase rewrites commits, so git needs a committer. Two things go wrong
+	// without one, and the second is the quiet one: on a machine with no
+	// configured identity git refuses outright, and on a machine that has one
+	// it stamps that identity — so a push that happened to be rebased is
+	// committed by whoever runs the worker rather than by the developer who
+	// pushed it.
+	_, err := r.git.run(ctx, r.dir,
+		"-c", "user.name="+committer.Name,
+		"-c", "user.email="+committer.Email,
+		"rebase", onto)
 	if err == nil {
 		return nil
 	}
 
 	// Leave the clone usable. A half-rebased worktree would poison the clone
-	// cache for every later task that reuses it.
-	if _, abortErr := r.git.run(ctx, r.dir, "rebase", "--abort"); abortErr != nil {
+	// cache for every later task that reuses it. The abort fails harmlessly
+	// when the rebase never started, which is why its error is only reported
+	// alongside the real one.
+	if _, abortErr := r.git.run(ctx, r.dir, "rebase", "--abort"); abortErr != nil && !isConflict(err) {
 		return fmt.Errorf("%w (and the abort failed: %v)", err, abortErr)
 	}
 
-	return fmt.Errorf("%w: %v", ErrConflict, err)
+	// Only a conflict is a conflict. Reporting anything else as one sends a
+	// developer to resolve something that is not there — and they will land
+	// back here every time, because nothing they can do will fix it.
+	if isConflict(err) {
+		return fmt.Errorf("%w: %v", ErrConflict, err)
+	}
+
+	return err
+}
+
+// isConflict reports whether git failed because the replay did not apply.
+//
+// git says so in words rather than in an exit code: every rebase failure exits
+// non-zero, and a missing identity leaves a rebase in progress exactly as a
+// conflict does, so the state of the worktree cannot tell them apart either.
+func isConflict(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	text := err.Error()
+
+	return strings.Contains(text, "CONFLICT") ||
+		strings.Contains(text, "could not apply") ||
+		strings.Contains(text, "patch does not apply")
 }
 
 // EmptyTree returns the hash of the empty tree, writing the object if needed.

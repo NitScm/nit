@@ -47,9 +47,18 @@ jobs:
 
       - run: go vet ./...
 
-      - name: Create the migrate-test database
+      # Two databases, and they are not interchangeable.
+      #
+      # nit_test holds the schema the store conformance suite truncates between
+      # cases, so it has to be migrated first — without that every case fails
+      # with `relation "audit_log" does not exist`.
+      #
+      # nit_migrate_test is left empty on purpose: TestMigrateIsIdempotent
+      # resets it and asserts that a fresh database receives every migration.
+      - name: Prepare the test databases
         run: |
           PGPASSWORD=postgres psql -h localhost -U postgres -c 'CREATE DATABASE nit_migrate_test'
+          go run ./cmd/nitctl migrate -dsn 'postgres://postgres:postgres@localhost:5432/nit_test'
 
       - name: Test with the race detector
         env:

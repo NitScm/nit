@@ -92,11 +92,15 @@ type Repo interface {
 
 	// Rebase replays the current branch onto another commit.
 	//
+	// The committer is explicit because a rebase rewrites commits. Author lines
+	// survive it; committer lines do not, so without this the identity stamped
+	// on a rebased push is whoever runs the worker.
+	//
 	// It returns ErrConflict when the replay does not apply cleanly, having
 	// first aborted so the clone is left usable. A conflict is not an error to
 	// retry: the same patch will conflict again, and only the author can
 	// resolve it.
-	Rebase(ctx context.Context, onto string) error
+	Rebase(ctx context.Context, onto string, committer Author) error
 
 	// EmptyTree returns the hash of the empty tree, creating the object if the
 	// repository does not have it yet.

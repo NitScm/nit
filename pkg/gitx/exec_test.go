@@ -2,9 +2,11 @@ package gitx
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/NitScm/nit/pkg/patch"
@@ -249,4 +251,129 @@ func writeScript(t *testing.T, dir, name, marker string) string {
 	}
 
 	return path
+}
+
+// A rebase rewrites commits, so it needs a committer identity.
+//
+// Two failures hide here, and the second is the dangerous one. On a machine
+// with no configured identity — a CI runner, a container — git refuses
+// outright. On a machine that has one, git quietly stamps *that* identity as
+// the committer, so a push that happened to be rebased is committed by
+// whoever runs the worker rather than by the developer who pushed it. Author
+// lines survive a rebase; committer lines do not.
+func TestRebaseCommitsAsTheGivenIdentity(t *testing.T) {
+	g := requireGit(t)
+	ctx := context.Background()
+
+	// No ambient identity at all, which is what a CI runner looks like.
+	empty := filepath.Join(t.TempDir(), "gitconfig")
+	if err := os.WriteFile(empty, nil, 0o600); err != nil {
+		t.Fatalf("write empty config: %v", err)
+	}
+	g.Env = []string{
+		"GIT_CONFIG_GLOBAL=" + empty,
+		"GIT_CONFIG_SYSTEM=/dev/null",
+	}
+
+	repo, dir := rebaseFixture(t, g)
+
+	author := Author{Name: "Dev Eloper", Email: "dev@example.com"}
+
+	if err := repo.Rebase(ctx, "main", author); err != nil {
+		t.Fatalf("Rebase: %v", err)
+	}
+
+	if got := gitOut(t, g, dir, "log", "-1", "--format=%cn <%ce>", "HEAD"); got != "Dev Eloper <dev@example.com>" {
+		t.Errorf("committer = %q, want the identity passed to Rebase", got)
+	}
+}
+
+// A rebase that fails for a reason other than a conflict must not be reported
+// as one. "Your change no longer applies; pull, resolve, and push again" sends
+// a developer to resolve a conflict that does not exist, and they will land
+// back here every time.
+func TestRebaseReportsAConflictOnlyWhenThereIsOne(t *testing.T) {
+	g := requireGit(t)
+	ctx := context.Background()
+
+	repo, _ := rebaseFixture(t, g)
+
+	err := repo.Rebase(ctx, "no-such-ref", Author{Name: "Dev", Email: "dev@example.com"})
+	if err == nil {
+		t.Fatal("rebasing onto a ref that does not exist should fail")
+	}
+	if errors.Is(err, ErrConflict) {
+		t.Errorf("reported as a conflict: %v", err)
+	}
+}
+
+// rebaseFixture builds a repository whose current branch has diverged from
+// main, so that a rebase has something to replay.
+func rebaseFixture(t *testing.T, g *ExecGit) (Repo, string) {
+	t.Helper()
+
+	ctx := context.Background()
+	dir := t.TempDir()
+
+	steps := [][]string{
+		{"init", "--initial-branch=main", "."},
+		{"config", "user.email", "seed@example.com"},
+		{"config", "user.name", "Seed"},
+	}
+	for _, args := range steps {
+		if _, err := g.run(ctx, dir, args...); err != nil {
+			t.Fatalf("setup %v: %v", args, err)
+		}
+	}
+
+	write := func(name, content string) {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o600); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	commit := func(msg string) {
+		if _, err := g.run(ctx, dir, "add", "--all"); err != nil {
+			t.Fatalf("add: %v", err)
+		}
+		if _, err := g.run(ctx, dir, "commit", "-m", msg); err != nil {
+			t.Fatalf("commit: %v", err)
+		}
+	}
+
+	write("base.txt", "base\n")
+	commit("base")
+
+	if _, err := g.run(ctx, dir, "checkout", "-b", "topic"); err != nil {
+		t.Fatalf("branch: %v", err)
+	}
+	write("topic.txt", "topic\n")
+	commit("topic")
+
+	if _, err := g.run(ctx, dir, "checkout", "main"); err != nil {
+		t.Fatalf("checkout main: %v", err)
+	}
+	write("main.txt", "main\n")
+	commit("main moves on")
+
+	if _, err := g.run(ctx, dir, "checkout", "topic"); err != nil {
+		t.Fatalf("checkout topic: %v", err)
+	}
+
+	repo, err := g.Open(ctx, dir)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+
+	return repo, dir
+}
+
+func gitOut(t *testing.T, g *ExecGit, dir string, args ...string) string {
+	t.Helper()
+
+	out, err := g.run(context.Background(), dir, args...)
+	if err != nil {
+		t.Fatalf("git %v: %v", args, err)
+	}
+
+	return strings.TrimSpace(string(out))
 }
