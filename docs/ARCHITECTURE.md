@@ -214,7 +214,7 @@ Tables (beyond the obvious `users`, `tasks`, `notifications`):
 | `workspaces` | One checkout on one machine, owned by a user |
 | `leases` | `(resource_key, holder, token, expires_at)` for queue serialization |
 | `artifacts` | Content-addressed blobs (patches in and out), with TTL and a GC job |
-| `audit_log` | Append-only: actor, action, repo, branch, path, effect, rule id, policy version, request id. `DO INSTEAD NOTHING` rules block UPDATE and DELETE at the database, so an application bug cannot rewrite history |
+| `audit_log` | Append-only: actor, action, repo, branch, path, effect, rule id, policy version, request id. A trigger refuses UPDATE, DELETE and TRUNCATE at the database with an error, so an application bug cannot rewrite history and an operator who tries is told rather than quietly ignored |
 
 Two identifiers are carried from day one even though they are constant today:
 

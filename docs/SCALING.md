@@ -184,26 +184,34 @@ two rows (`push.accepted` from the control plane, `push.applied` from the
 worker); a refused one writes `push.rejected` plus one `push.denied_path` per
 offending path. Each row is written against four indexes.
 
-The append-only rules make this sharper than it looks:
+Emptying it is deliberately awkward, and since migration 0002 it is at least
+honest about being so. The table carries a trigger that raises:
 
-```sql
-CREATE RULE audit_log_no_delete AS ON DELETE TO audit_log DO INSTEAD NOTHING;
+```
+ERROR:  audit_log is append-only: DELETE is not permitted
+HINT:   to purge, disable trigger audit_log_append_only on audit_log, ...
 ```
 
-`DO INSTEAD NOTHING` is **silent**. A purge reports `DELETE 0`, exits zero, and
-leaves every row in place, so an operator is told the cleanup worked when nothing
-happened. Both this and the procedure below were checked against a real
-PostgreSQL, not inferred.
+It replaced rewrite rules that answered a `DELETE` with `DELETE 0`, exiting
+zero and removing nothing — so an operator was told the cleanup had worked.
+That was verified against a live database, which is also how the replacement
+was checked.
 
-Purging today:
+Purging is now a deliberate act rather than a command that appears to work:
 
 ```sql
 BEGIN;
-DROP RULE audit_log_no_delete ON audit_log;
+ALTER TABLE audit_log DISABLE TRIGGER audit_log_append_only;
+ALTER TABLE audit_log DISABLE TRIGGER audit_log_append_only_truncate;
 DELETE FROM audit_log WHERE occurred_at < now() - interval '2 years';
-CREATE RULE audit_log_no_delete AS ON DELETE TO audit_log DO INSTEAD NOTHING;
+ALTER TABLE audit_log ENABLE TRIGGER audit_log_append_only;
+ALTER TABLE audit_log ENABLE TRIGGER audit_log_append_only_truncate;
 COMMIT;
 ```
+
+The `TRUNCATE` trigger is separate because a row trigger does not see a
+`TRUNCATE` at all: without it the strongest guarantee in the schema would be
+one word away from being bypassed by accident.
 
 *The work.* Range-partition `audit_log` by `occurred_at`, monthly. `DROP TABLE`
 on an old partition is not a `DELETE`, so the rule does not block it and

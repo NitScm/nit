@@ -600,3 +600,34 @@ layer rather than through the file.
 
 If per-repository SSH keys ever matter, their home is the repository entry in
 the policy bundle, not process configuration.
+
+---
+
+## D31 — The audit trail refuses out loud
+
+**Decision.** `audit_log` is protected by a trigger that raises on `UPDATE`,
+`DELETE` and `TRUNCATE`, replacing the `DO INSTEAD NOTHING` rewrite rules of
+migration 0001.
+
+**Why.** The rules did stop an application bug from rewriting history, and they
+were silent about it. A purge answered `DELETE 0`, exited zero, and left every
+row in place — so an operator running a retention job was told it had worked.
+That was verified against a live database, not inferred.
+
+A guarantee that lies about being enforced is worse than one that is merely
+enforced, because the person it misleads is the one trying to do the right
+thing.
+
+**Consequence.** Emptying the table is now a deliberate act: disable the
+trigger, delete, enable it. That is the behaviour a purge should have had all
+along.
+
+`TRUNCATE` needs its own statement-level trigger, because a row trigger does
+not see one at all — without it the strongest guarantee in the schema would be
+one word away from being bypassed by accident. The store conformance harness
+disables exactly that trigger to reset a test database, which doubles as proof
+that the escape hatch works.
+
+It is also the portable form. PostgreSQL rewrite rules have no equivalent in
+MySQL or MariaDB, while all three have triggers, so this removes an obstacle to
+a second backend rather than adding one.

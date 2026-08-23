@@ -718,8 +718,9 @@ nitctl audit -user bob -since 1h -json | head -20
 ```
 
 ✔ **Who did what, when, and under which rule.** The table is append-only at the
-database level: `audit_log` carries `DO INSTEAD NOTHING` rules against UPDATE
-and DELETE, so an application bug cannot rewrite history.
+database level: `audit_log` carries a trigger that refuses UPDATE, DELETE and
+TRUNCATE with an error, so an application bug cannot rewrite history — and an
+operator who tries is told, rather than quietly ignored.
 
 ---
 
