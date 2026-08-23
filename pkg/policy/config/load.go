@@ -31,14 +31,50 @@ func Load(root string) (*policy.Policy, error) {
 	return LoadFS(os.DirFS(root))
 }
 
-// LoadFS reads a policy bundle from a file system. Taking an fs.FS rather than
-// a path keeps the loader testable without touching disk, and leaves the door
-// open to bundles served from an embedded FS or fetched from a git object
-// store.
+// LoadFS reads a policy bundle from a file system and compiles it. Taking an
+// fs.FS rather than a path keeps the loader testable without touching disk, and
+// leaves the door open to bundles served from an embedded FS or fetched from a
+// git object store.
 func LoadFS(fsys fs.FS) (*policy.Policy, error) {
-	version, err := hashBundle(fsys)
+	spec, err := LoadSpecFS(fsys)
 	if err != nil {
 		return nil, err
+	}
+
+	return policy.Compile(spec)
+}
+
+// LoadSpec reads a bundle from a directory without compiling it.
+func LoadSpec(root string) (policy.Spec, error) {
+	return LoadSpecFS(os.DirFS(root))
+}
+
+// LoadSpecFS reads a bundle into the spec that Compile turns into a policy,
+// and stops there.
+//
+// It exists so a bundle can be *composed* before it is compiled. `policy.Source`
+// names that as the case it was extracted for — rules from files, with group
+// membership resolved against a company directory, so that
+// `subject: {type: group, id: platform}` means what the company already means
+// by it — and without this the only way to do it was to re-implement the YAML
+// reader, which would then drift from this one on the next format change.
+//
+// Two things a caller must respect.
+//
+// **Compile is not optional.** A Spec is not a policy: Compile is what resolves
+// group inclusion, rejects cycles, checks that a rule's subject exists and
+// enforces that write implies read. A Source that skipped it would serve rules
+// nobody validated.
+//
+// **The version is a hash of what was read**, so a composed bundle must set its
+// own. Two bundles that differ only in membership merged from elsewhere would
+// otherwise share a version, and everything keyed on one — a sync point, an
+// audit record, the pull cache's rights profile — would treat them as the same
+// rules.
+func LoadSpecFS(fsys fs.FS) (policy.Spec, error) {
+	version, err := hashBundle(fsys)
+	if err != nil {
+		return policy.Spec{}, err
 	}
 
 	spec := policy.Spec{
@@ -49,7 +85,7 @@ func LoadFS(fsys fs.FS) (*policy.Policy, error) {
 
 	var users []UserFile
 	if err := decodeFile(fsys, usersFile, &users); err != nil {
-		return nil, err
+		return policy.Spec{}, err
 	}
 	for _, u := range users {
 		spec.Users = append(spec.Users, policy.User{
@@ -63,7 +99,7 @@ func LoadFS(fsys fs.FS) (*policy.Policy, error) {
 
 	var groups []GroupFile
 	if err := decodeFile(fsys, groupsFile, &groups); err != nil {
-		return nil, err
+		return policy.Spec{}, err
 	}
 	for _, g := range groups {
 		group := policy.Group{
@@ -81,7 +117,7 @@ func LoadFS(fsys fs.FS) (*policy.Policy, error) {
 
 	var repos []RepositoryFile
 	if err := decodeFile(fsys, repositoriesFile, &repos); err != nil {
-		return nil, err
+		return policy.Spec{}, err
 	}
 	for _, r := range repos {
 		spec.Repositories = append(spec.Repositories, policy.Repository{
@@ -95,14 +131,14 @@ func LoadFS(fsys fs.FS) (*policy.Policy, error) {
 	for _, r := range repos {
 		rules, err := loadRules(fsys, r.ID)
 		if err != nil {
-			return nil, err
+			return policy.Spec{}, err
 		}
 		if len(rules) > 0 {
 			spec.Rules[policy.RepoID(r.ID)] = rules
 		}
 	}
 
-	return policy.Compile(spec)
+	return spec, nil
 }
 
 func loadRules(fsys fs.FS, repoID string) ([]policy.Rule, error) {

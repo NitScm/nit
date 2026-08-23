@@ -998,3 +998,46 @@ wraps the context and the package only respects it.
 **Ownership is explicit.** What a caller supplies, the caller closes; what the
 package opens, it closes. A caller sharing one store between a server and a
 worker in one process would otherwise have it closed underneath them.
+
+---
+
+## D39 — A conformance suite for `policy.Source`, and the spec it needs to be useful
+
+**Decision.** `pkg/policy/policytest` holds every `policy.Source` to the same
+assertions, and `policyconfig.LoadSpecFS` exposes the bundle before it is
+compiled.
+
+**Why the suite.** `policy.Source` was the third seam declared and the first
+with nothing checking it. Its obligations are not in the signature: `Current`
+returns a `*Policy`, and the interesting part is that it must be cheap enough
+for the request path, never nil, safe under concurrent readers, immutable once
+handed out, and — the one that matters — unchanged by a bundle that fails to
+compile.
+
+That last property is the difference between a typo and an incident. Failing
+open grants access nobody authorized; failing closed takes an outage on every
+edit. The suite asserts the third answer, and a mutation confirmed it: making
+the loader clear its bundle on a compile error fails
+`ABrokenBundleChangesNothing`, while a harmless edit beside it does not.
+
+**A defect in the suite's own design, found by implementing it.** The first
+version had `Publish(spec)` and asserted the served version equalled the
+published one. The directory loader computes its version as a *hash of the
+bundle*, so it can never honour a version chosen by a caller — the suite was
+unimplementable by the implementation it was written for. It now asks for a
+*behaviour* ("this user may read, or may not") and asserts the decision changed
+and the version moved, which both kinds of source can satisfy.
+
+**Why `LoadSpecFS`.** `policy.Source`'s own documentation names composition as
+the case it was extracted for: rules from files, group membership resolved
+against a company directory. The loader made that impossible — it read the files
+and compiled in one step — so the only way to compose was to re-implement the
+YAML reader, which would drift from this one on the next format change. The
+repository documented a use case it did not permit.
+
+**What a composer must respect**, both stated where the function is and tested:
+`Compile` is not optional, because it is what resolves group inclusion and
+refuses a rule naming an undeclared subject; and a composed bundle sets its own
+`Version`, because the loader's is a hash of the files and everything keyed on a
+version — a sync point, an audit record, the pull cache's rights profile — would
+otherwise conflate two bundles that decide differently.

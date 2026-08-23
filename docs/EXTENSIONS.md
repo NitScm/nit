@@ -27,6 +27,32 @@ kept its version across an edit would serve projections computed under rules
 that no longer apply. The directory loader hashes the bundle's content, which is
 the property to copy.
 
+**`pkg/policy/policytest` is the suite that holds an implementation to this**,
+the same way `storetest` and `blobtest` do for their seams:
+
+```go
+import "github.com/NitScm/nit/pkg/policy/policytest"
+
+func TestConformance(t *testing.T) {
+    policytest.Run(t, func(t *testing.T) policytest.Harness { ... })
+}
+```
+
+It asserts what is easy to get wrong and invisible when you do: that `Current`
+is cheap enough for the request path, never nil, safe under concurrent readers,
+that a bundle already handed out never changes under its holder — a worker uses
+one for a whole task — and that **a bundle which fails to compile changes
+nothing**. That last one is the security-relevant assertion: failing open would
+grant access nobody authorized, failing closed would take an outage on every
+typo.
+
+**Composing a bundle** — the case this seam was extracted for — starts from
+`policyconfig.LoadSpecFS`, which reads the files and stops before compiling.
+Merge what you need into the `Spec`, set your own `Version` (the loader's is a
+hash of the files, and a composed bundle is no longer those files), then
+`policy.Compile`. Compile is not optional: it resolves group inclusion, rejects
+cycles, and refuses a rule naming a subject nobody declared.
+
 `Current` is called on the request path, so it must be cheap and must not
 block. Implementations that fetch from elsewhere refresh in the background and
 serve the last good bundle meanwhile — which is what the directory loader
