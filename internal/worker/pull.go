@@ -5,8 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strconv"
 
 	"github.com/NitScm/nit/internal/compress"
+	"github.com/NitScm/nit/internal/pullcache"
 	"github.com/NitScm/nit/internal/synctoken"
 	"github.com/NitScm/nit/internal/taskspec"
 	"github.com/NitScm/nit/pkg/enforce"
@@ -82,27 +84,63 @@ func (w *Worker) handlePull(ctx context.Context, task *store.Task) ([]byte, erro
 		}
 	}
 
-	raw, err := repo.Diff(ctx, from, tip)
+	// What a subject receives depends on the subject only through what it may
+	// read, so the whole diff-filter-compress-store sequence is shared by
+	// everyone with the same rights. On a release day that is the difference
+	// between five hundred passes and one per profile.
+	//
+	// The key is built before any of that work, which is the point: a hit skips
+	// the diff too, not only the filtering.
+	subject, err := current.Subject(spec.PolicyUserID)
 	if err != nil {
-		return nil, err
+		// The account left the bundle while the task was queued. Delivering
+		// nothing is the only safe reading, and filterForReader says so with
+		// the error a client can act on.
+		return nil, permanent("user_not_in_policy",
+			"%s is no longer in the policy bundle", spec.PolicyUserID)
 	}
 
-	filtered, report, err := w.filterForReader(raw, current, spec, storeRepo)
-	if err != nil {
-		return nil, err
+	key := pullcache.Key{
+		Repository: spec.Remote,
+		From:       from,
+		To:         tip,
+		Profile: current.Profile(storeRepo.PolicyRepoID, "refs/heads/"+spec.Branch,
+			policy.ActionRead, subject),
 	}
 
-	result.Report.FilesTotal = report.total
-	result.Report.FilesDelivered = report.delivered
-	result.Report.FilesWithheld = report.withheld
-
-	if len(filtered) > 0 {
-		descriptor, err := w.storePullPatch(ctx, filtered)
+	entry, cached := w.pulls.Get(ctx, key)
+	if !cached {
+		raw, err := repo.Diff(ctx, from, tip)
 		if err != nil {
 			return nil, err
 		}
-		result.Patch = &descriptor
+
+		filtered, report, err := w.filterForReader(raw, current, spec, storeRepo)
+		if err != nil {
+			return nil, err
+		}
+
+		entry = pullcache.Entry{
+			FilesTotal:     report.total,
+			FilesDelivered: report.delivered,
+			FilesWithheld:  report.withheld,
+		}
+
+		if len(filtered) > 0 {
+			descriptor, err := w.storePullPatch(ctx, filtered)
+			if err != nil {
+				return nil, err
+			}
+			entry.Patch = &descriptor
+		}
+
+		w.pulls.Put(key, entry)
 	}
+
+	result.Report.FilesTotal = entry.FilesTotal
+	result.Report.FilesDelivered = entry.FilesDelivered
+	result.Report.FilesWithheld = entry.FilesWithheld
+	result.Patch = entry.Patch
 
 	token, err := w.recordPullSyncPoint(ctx, spec, storeRepo.ID, tip, current.Version())
 	if err != nil {
@@ -124,6 +162,10 @@ func (w *Worker) handlePull(ctx context.Context, task *store.Task) ([]byte, erro
 		Detail: detail(map[string]string{
 			"upstream_commit": tip,
 			"from":            spec.FromCommit,
+			// Recorded because "why did this pull take 40ms" and "why did this
+			// one take 40 seconds" have the same answer, and an operator
+			// reading the trail should not have to guess which happened.
+			"reused_projection": strconv.FormatBool(cached),
 		}),
 	})
 

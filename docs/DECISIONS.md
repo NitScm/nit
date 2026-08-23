@@ -828,3 +828,65 @@ evaluations rather than merely complicate them — the fix is not to move the S3
 backend into the community edition. It is for `nitd` to serve blobs to workers
 over the API it already exposes, which removes the shared volume for everyone
 and costs the commercial edition nothing it was selling.
+
+---
+
+## D36 — A pull projection is shared by rights profile, not by user
+
+**Decision.** `internal/pullcache` caches a filtered projection under
+`(repository, from, to, rights profile)`, where the profile comes from
+`policy.Profile`. Users whose read rights are identical are served the same
+bytes. The cache is per worker and holds descriptors, not patches.
+
+**Why.** A pull diffed and filtered per user. Five hundred developers pulling
+after a release meant five hundred of each for one upstream change — the cost
+that arrives on a release day rather than gradually, and the one a customer
+notices first.
+
+**The whole risk is the key**, and it is not a performance risk. If two subjects
+with different rights ever share a profile, one developer receives another's
+files, delivered by the component whose purpose is to prevent that. So the
+profile is not "same groups" or "same user list"; it is derived from what
+`Evaluate` actually reads.
+
+For a fixed repository, ref and action, a decision depends on the subject
+through exactly two things: whether the user is disabled, and which rules pass
+`HasAction`, `MatchesSubject` and `MatchesRef`. Everything downstream —
+`MatchesPath`, the deny-wins fold, the specificity tie-break — reads the rule
+and the path and never the subject. Two subjects agreeing on those two things
+therefore agree on every path, whatever the path is. The profile hashes exactly
+those, plus the policy version, which pins which compilation the rule positions
+refer to.
+
+**Positions rather than rule ids.** A position is unique within a compiled
+policy by construction. An id is author-supplied or derived, and while the
+loader rejects duplicates today, the profile's soundness would then rest on a
+validation rule rather than on arithmetic.
+
+**Sufficient, not necessary.** Two subjects who would decide alike but whose
+rule sets differ get different profiles, and the work is done twice. The other
+direction is a leak, so this is where the imprecision belongs.
+
+**Proved rather than argued.** `TestEqualProfilesDecideAlike` runs every subject
+pair against a path corpus; the generated variant does the same for 200 policies
+with overlapping groups, exemptions and ref restrictions. Both were verified by
+mutation — a constant fingerprint and one ignoring `except` are caught, and a
+third mutation (dropping the `MatchesRef` filter) is deliberately *not* a leak,
+because the ref is hashed directly; a separate test pins that it costs sharing.
+
+**Descriptors, not bytes.** The patch already lives in the blob store under its
+digest, so an entry is a few dozen bytes. That is what makes the bound a
+constant rather than a setting: 1024 entries cost less than one patch, and a
+repository with a thousand distinct rights profiles has a readability problem
+before it has a cache problem.
+
+**An entry cannot outlive what it names.** Generated pull patches expire, and a
+hit naming a swept one would hand a client a digest it cannot fetch. Entries
+expire at a quarter of the artifact TTL *and* a hit verifies the blob exists;
+a missing blob is a miss, so the worst case is one recomputation.
+
+**Per worker, deliberately.** A shared cache needs a table, a migration on three
+backends and an invalidation story. Each pull records `reused_projection` in its
+audit detail, so the hit rate is observable before anyone pays for the shared
+version — and so an operator asking why one pull took 40 ms and another 40
+seconds is told rather than left to guess.

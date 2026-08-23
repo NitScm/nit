@@ -140,6 +140,12 @@ func testPolicy(t *testing.T) *policy.Policy {
 
 // newHarness builds an upstream repository with one commit and wires a worker.
 func newHarness(t *testing.T) *harness {
+	return newHarnessWithPolicy(t, testPolicy(t))
+}
+
+// newHarnessWithPolicy is newHarness for a test that needs more than one
+// subject — sharing between users cannot be tested with a policy that has one.
+func newHarnessWithPolicy(t *testing.T, p *policy.Policy) *harness {
 	t.Helper()
 	requireGit(t)
 
@@ -186,7 +192,7 @@ func newHarness(t *testing.T) *harness {
 		Store:      h.store,
 		Blobs:      h.blobs,
 		Git:        gitx.NewExecGit(),
-		Policy:     policyloader.NewStatic(testPolicy(t)),
+		Policy:     policyloader.NewStatic(p),
 		SyncTokens: h.signer,
 		Log:        slog.New(slog.NewTextHandler(io.Discard, nil)),
 		Now:        func() time.Time { return testNow },

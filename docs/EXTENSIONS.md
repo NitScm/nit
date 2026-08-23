@@ -20,6 +20,13 @@ against a company directory, so `subject: {type: group, id: platform}` means
 what that company already means by it. The rules stay in files; only the
 membership comes from elsewhere.
 
+One thing an implementation must preserve, because something now depends on it:
+`Version()` has to change whenever any rule changes. The pull cache keys a
+shared projection on a fingerprint that includes the version, so a bundle that
+kept its version across an edit would serve projections computed under rules
+that no longer apply. The directory loader hashes the bundle's content, which is
+the property to copy.
+
 `Current` is called on the request path, so it must be cheap and must not
 block. Implementations that fetch from elsewhere refresh in the background and
 serve the last good bundle meanwhile — which is what the directory loader

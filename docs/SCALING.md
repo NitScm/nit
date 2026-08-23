@@ -110,27 +110,65 @@ sharing a directory would race on the same mirror.
 
 ---
 
-## 4. Pull is O(users)
+## 4. Pull was O(users)
 
-Each pull clones, diffs `sync_point..tip`, and filters the result **per user**.
-Five hundred developers pulling after a release is five hundred clones and five
-hundred diffs for one upstream change, with no sharing between users whose read
-rights are identical.
+**Fixed, within a worker.** A pull used to diff `sync_point..tip` and filter the
+result per user: five hundred developers pulling after a release meant five
+hundred diffs and five hundred filter passes for one upstream change, with no
+sharing between users whose read rights are identical.
 
-This is the second-worst scaling property, and the one that bites on a release
-day rather than gradually.
+`internal/pullcache` shares the result. The key is
+`(repository, from, to, rights profile)`, and a hit skips the diff as well as
+the filtering — the key is built before either runs.
 
-**Mitigation today.** Dedicate workers to read traffic so it does not compete
-with pushes for disk:
+**What makes it safe** is `policy.Profile`, and it is worth being precise about
+why, because a wrong answer here is not a slow pull but one developer receiving
+another's files.
+
+For a fixed repository, ref and action, `Evaluate` depends on the subject
+through exactly two things: whether the user is disabled, and which rules pass
+`HasAction`, `MatchesSubject` and `MatchesRef`. Everything after that reads the
+rule and the path, never the subject. So two subjects agreeing on those two
+things agree on every path, whatever the path is — and the profile is a hash of
+precisely those, plus the policy version that pins which rules the positions
+refer to.
+
+It is a sufficient condition, not a necessary one. Two subjects who would decide
+alike but whose rule sets differ get different profiles and the work is done
+twice. That is the direction to be wrong in.
+
+The property is tested rather than argued: `TestEqualProfilesDecideAlike` runs
+every subject pair against a path corpus, and
+`TestEqualProfilesDecideAlikeOnGeneratedPolicies` does the same for 200
+generated policies with overlapping groups, exemptions and ref restrictions.
+Both were checked by mutation — a constant fingerprint and one ignoring `except`
+are caught.
+
+**What is cached** is the artifact descriptor and the file counts, not the
+bytes: the patch is already in the blob store. An entry is a few dozen bytes,
+1024 of them are kept, and eviction is least-recently-used. The size is not
+configurable because there is nothing to tune — a policy with a thousand
+distinct rights profiles for one repository has a readability problem long
+before it has a cache problem.
+
+**Entries expire at a quarter of `storage.pull_ttl`**, and a hit verifies the
+blob still exists before it is returned. An entry naming a swept patch would
+hand a client a digest it cannot fetch; a missing blob is treated as a miss, so
+the worst case is one recomputation.
+
+**Still per worker.** A shared cache would need a table, a migration on three
+backends and an invalidation story. A per-worker one needs none of that and
+still collapses the release-day herd, which arrives within minutes on the same
+handful of workers. `nitctl audit` shows which pulls reused a projection —
+`reused_projection` in the record's detail — so the hit rate is observable
+before anyone decides the shared version is worth its cost.
+
+**Also mitigated.** Dedicate workers to read traffic so it does not compete with
+pushes for disk:
 
 ```sh
 nit-worker -queues=pull -concurrency=4
 ```
-
-**The work.** Two independent wins: the clone cache of §3 removes most of the
-cost, and a filtered patch is cacheable by `(repository, from, to, read-rights
-fingerprint)` — everyone in the same groups gets the same bytes, so the first
-pull after a release could serve all the others.
 
 ---
 
@@ -288,18 +326,30 @@ the rules that could match it. Nothing about the current structure prevents it;
 
 ## 9. In what order to fix it
 
-1. **Clone cache** (§3) — largest single win; improves §2 and §4 at once.
-2. **`audit_log` partitioning** (§7) — the only item that is a correctness and
-   compliance problem rather than a performance one.
-3. **`LISTEN`/`NOTIFY`** (§7) — cheapest, removes a per-client database load.
-4. **`partition_leases`** (§5) — removes the global lock and the dequeue scan
-   together.
-5. **Pull result cache** (§4) — turns release-day load from O(users) into O(1).
-6. **Object storage for blobs** (§6) — removes the shared-volume constraint on
-   topology.
+Done, in the order they were taken:
 
-Items 1, 3 and 5 are performance. Items 2 and 4 change behaviour under load and
-deserve tests written before the change, not after.
+- ~~**Clone cache** (§3)~~ — a mirror per repository, a worktree per task, and
+  an LRU disk budget so the mirrors cannot fill the volume.
+- ~~**Pull result cache** (§4)~~ — release-day load falls from O(users) to
+  O(distinct rights profiles), per worker.
+
+What remains, in priority order:
+
+1. **`audit_log` partitioning** (§7) — the only item that is a correctness and
+   compliance problem rather than a performance one.
+2. **`LISTEN`/`NOTIFY`** (§7) — cheapest, removes a per-client database load.
+   PostgreSQL only; the MySQL backend has no equivalent and keeps polling.
+3. **`partition_leases`** (§5) — removes the global lock and the dequeue scan
+   together.
+4. **A shared pull cache** (§4) — only once `reused_projection` in the audit
+   trail shows the per-worker one missing often enough to justify a table and an
+   invalidation story.
+
+Item 2 is performance. Items 1 and 3 change behaviour under load and deserve
+tests written before the change, not after.
+
+Object storage for blobs (§6) is not on this list: the seam exists, and the
+implementation belongs to the commercial edition.
 
 ---
 

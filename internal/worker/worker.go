@@ -25,6 +25,7 @@ import (
 	"github.com/NitScm/nit/internal/auditlog"
 	"github.com/NitScm/nit/internal/gitcache"
 	"github.com/NitScm/nit/internal/policyloader"
+	"github.com/NitScm/nit/internal/pullcache"
 	"github.com/NitScm/nit/internal/synctoken"
 	"github.com/NitScm/nit/pkg/audit"
 	"github.com/NitScm/nit/pkg/blob"
@@ -113,6 +114,11 @@ type Worker struct {
 	// pays for the delta rather than for a whole clone.
 	cache *gitcache.Cache
 
+	// pulls shares a filtered projection between users with identical read
+	// rights, which is what keeps a release day from costing one diff and one
+	// filter pass per developer.
+	pulls *pullcache.Cache
+
 	// audit persists every decision and forwards it, and cannot fail a task
 	// while doing so.
 	audit *auditlog.Recorder
@@ -154,9 +160,15 @@ func New(cfg Config, deps Deps) (*Worker, error) {
 		return nil, err
 	}
 
+	// A quarter of the artifact TTL. An entry naming a swept patch is a hit
+	// that cannot be fetched, and while pullcache.Get verifies the blob before
+	// returning one, expiring well inside the window means it rarely has to.
+	pulls := pullcache.New(deps.Blobs, cfg.PullArtifactTTL/4, deps.Now)
+
 	return &Worker{
 		cfg:   cfg,
 		deps:  deps,
+		pulls: pulls,
 		cache: cache,
 		audit: auditlog.New(deps.Store.Audit(), deps.AuditSink, deps.Log),
 	}, nil
