@@ -11,10 +11,12 @@ No forge offers this: GitHub, GitLab and Gitea grant access per repository, not
 per path, and none of them can hide a file *inside* a repository from someone
 who can clone it.
 
-> Status: works end to end, with a web console. A developer clones a filtered projection, changes it,
-> pushes it back and pulls colleagues' work — with confidential subtrees that
-> never reach their machine. What remains is the web UI.
-> See `docs/ARCHITECTURE.md` §9.
+> Status: works end to end. A developer clones a filtered projection, changes
+> it, pushes it back and pulls colleagues' work — with confidential subtrees
+> that never reach their machine. The operations API, `nitctl` and the web
+> console in `../nit-console` are all there.
+> See `docs/ARCHITECTURE.md` §9 for what is done, and `docs/SCALING.md` for what
+> the next load will demand.
 
 ---
 

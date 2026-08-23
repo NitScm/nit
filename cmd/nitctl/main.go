@@ -42,6 +42,9 @@ Usage:
   nitctl tasks           [-state S] [-kind K] [-repository R] [-limit N] [-json]
   nitctl audit           [-user U] [-repository R] [-request ID] [-since 24h] [-json]
   nitctl audit prune     -before YYYY-MM-DD | -keep-days N [-batch 1000] [-yes]
+
+Server-side commands (migrate, token, audit prune) read the same configuration
+nitd reads. Point them at a file with -config, or set NIT_CONFIG.
   nitctl version
 
 Commands:
@@ -267,6 +270,7 @@ func migrate(args []string) error {
 	fs := flag.NewFlagSet("migrate", flag.ContinueOnError)
 
 	dsn := fs.String("dsn", "", "database DSN (defaults to the configured database.url)")
+	configFile := fs.String("config", "", "configuration file to read the DSN from")
 	status := fs.Bool("status", false, "list migrations without applying anything")
 
 	if err := fs.Parse(args); err != nil {
@@ -277,7 +281,7 @@ func migrate(args []string) error {
 	if resolved == "" {
 		// Fall back to the same configuration nitd reads, so an operator does
 		// not have to restate the DSN their configuration file already holds.
-		cfg, err := bootstrap.LoadConfigFrom("")
+		cfg, err := bootstrap.LoadConfigFrom(*configFile)
 		if err == nil {
 			resolved = cfg.DatabaseURL
 		}
@@ -345,6 +349,7 @@ func token(args []string) error {
 	label := fs.String("label", "", "free-text label, typically a machine name")
 	id := fs.String("id", "", "session id (revoke)")
 	ttl := fs.Duration("ttl", 720*time.Hour, "how long the token stays valid")
+	configFile := fs.String("config", "", "configuration file to read the DSN and policy directory from")
 
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
@@ -353,7 +358,7 @@ func token(args []string) error {
 	resolvedDSN, resolvedPolicy := *dsn, *policyDir
 
 	if resolvedDSN == "" || resolvedPolicy == "" {
-		cfg, err := bootstrap.LoadConfigFrom("")
+		cfg, err := bootstrap.LoadConfigFrom(*configFile)
 		if err == nil {
 			if resolvedDSN == "" {
 				resolvedDSN = cfg.DatabaseURL

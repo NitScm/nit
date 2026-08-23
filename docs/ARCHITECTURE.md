@@ -289,9 +289,11 @@ Bottom-up, because the valuable part is testable without infrastructure.
    pull, guards on top.
 4. **`pkg/gitx`, `pkg/forge`, `pkg/protocol`** — interfaces and wire types. Done.
 5. **`internal/store`, `internal/queue`, `internal/blob/filesystem`** — persistence, queue,
-   leases, artifacts. Done. Two store backends (in-memory and PostgreSQL) share
-   one conformance suite; the queue implements branch partitioning, lease expiry
-   and fencing, verified against real PostgreSQL under concurrency.
+   leases, artifacts. Done. Three store backends — in-memory, PostgreSQL, and
+   MySQL/MariaDB — share one conformance suite; the queue implements branch
+   partitioning, lease expiry and fencing, verified against real PostgreSQL and
+   real MySQL under concurrency. The blob store has a conformance suite of its
+   own, and retention is an operator command (`nitctl audit prune`).
 6. **`internal/server`, `internal/auth`** — the API and sessions. Done. Tokens,
    sync token signing, the push authorization path, the pull queueing path, long
    polling, and the audit trail.
@@ -304,6 +306,15 @@ Bottom-up, because the valuable part is testable without infrastructure.
 9. **Operations API and Angular console.** Done: `/v1/admin/*` serves tasks,
    audit, statistics and the compiled policy, read-only; `nitctl stats|tasks|audit`
    and the web console in `../nit-console` are both clients of it.
+10. **`pkg/nitd`** — assembling a server from outside the module. Done, and the
+    two shipped binaries are built on it, so it cannot drift from what they do.
+
+**Verified as a whole, not only in parts.** The four binaries were run as
+processes against a real PostgreSQL and a real forge: a token issued, a
+filtered clone taken, an authorized push landing upstream authored by the
+authenticated user, a push touching a denied path refused with the rule named
+and the forge unchanged, an incremental pull withholding a rotated secret, and
+the operations API refusing an account outside `admin_groups`.
 
 ---
 

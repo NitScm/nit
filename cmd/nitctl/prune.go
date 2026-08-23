@@ -33,6 +33,7 @@ func auditPrune(args []string) error {
 	batch := fs.Int("batch", 1000, "rows per batch; smaller holds locks for less time")
 	yes := fs.Bool("yes", false, "actually delete; without it the command only reports")
 	dsn := fs.String("dsn", "", "database DSN (defaults to the configured database.url)")
+	configFile := fs.String("config", "", "configuration file to read the DSN from")
 	actor := fs.String("actor", "", "who is running this, recorded in the trail (defaults to the OS user)")
 
 	if err := fs.Parse(args); err != nil {
@@ -46,7 +47,7 @@ func auditPrune(args []string) error {
 
 	resolved := *dsn
 	if resolved == "" {
-		cfg, err := bootstrap.LoadConfigFrom("")
+		cfg, err := bootstrap.LoadConfigFrom(*configFile)
 		if err == nil {
 			resolved = cfg.DatabaseURL
 		}
