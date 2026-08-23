@@ -319,7 +319,33 @@ own.
 A deployment keeping records for years and pruning monthly may well want it.
 That is a choice for whoever carries the compliance risk, taken knowingly.
 
-### Long polling is a poll
+### Long polling was a poll
+
+**Fixed on PostgreSQL.** A trigger calls `pg_notify` when a task's `state`
+changes (migration 0003), `internal/store/postgres` holds one `LISTEN`
+connection per process, and `internal/taskevents` fans notifications out to the
+waiters. A developer watching their own push is woken when it moves rather than
+up to `EventPollInterval` later.
+
+**The poll stays**, and that is the design rather than a leftover. A
+notification can be dropped — the listening connection can fail and reconnect
+across a change — so it is what shortens the wait, never what guarantees one
+arrives. A client that trusted it would hang the first time a connection
+blipped.
+
+Two details worth keeping: the trigger fires only on a change of `state`,
+because a heartbeat rewrites `lease_expires_at` every few seconds and waking
+every waiter for that would cost more than the poll it replaces; and a caller
+subscribes *before* reading the task, or a change landing in between leaves it
+on the ticker for no reason — the window that made the first version of this
+pointless, found by a test.
+
+**MySQL and MariaDB keep polling.** They have no `LISTEN`/`NOTIFY` and no way
+for a trigger to reach another connection, so `internal/store/mysql` does not
+implement `store.TaskNotifier`, the server says so on its start-up line, and the
+only difference is up to one interval of latency.
+
+### The original note
 
 `GET /v1/tasks/{id}/events` queries `tasks` every `EventPollInterval` (500 ms)
 for up to `server.event_max_wait` (30 s). Five hundred clients waiting is roughly
@@ -352,6 +378,8 @@ the rules that could match it. Nothing about the current structure prevents it;
 
 Done, in the order they were taken:
 
+- ~~**`LISTEN`/`NOTIFY`** (§7)~~ — PostgreSQL wakes a waiting client instead of
+  being asked twice a second. MySQL keeps polling, and says so.
 - ~~**Audit retention** (§7)~~ — `nitctl audit prune`, on all three backends,
   recording itself as it goes. Partitioning is available to an operator and is
   not the default, for the reason §7 gives.
@@ -362,16 +390,14 @@ Done, in the order they were taken:
 
 What remains, in priority order:
 
-1. **`LISTEN`/`NOTIFY`** (§7) — cheapest, removes a per-client database load.
-   PostgreSQL only; the MySQL backend has no equivalent and keeps polling.
-2. **`partition_leases`** (§5) — removes the global lock and the dequeue scan
+1. **`partition_leases`** (§5) — removes the global lock and the dequeue scan
    together.
-3. **A shared pull cache** (§4) — only once `reused_projection` in the audit
+2. **A shared pull cache** (§4) — only once `reused_projection` in the audit
    trail shows the per-worker one missing often enough to justify a table and an
    invalidation story.
 
-Item 1 is performance. Item 2 changes behaviour under load and deserves tests
-written before the change, not after.
+Item 1 changes behaviour under load and deserves tests written before the
+change, not after.
 
 Object storage for blobs (§6) is not on this list: the seam exists, and the
 implementation belongs to the commercial edition.

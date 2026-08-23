@@ -1041,3 +1041,44 @@ refuses a rule naming an undeclared subject; and a composed bundle sets its own
 `Version`, because the loader's is a hash of the files and everything keyed on a
 version — a sync point, an audit record, the pull cache's rights profile — would
 otherwise conflate two bundles that decide differently.
+
+---
+
+## D40 — A notification shortens a wait; the poll still guarantees it
+
+**Decision.** On PostgreSQL, a trigger calls `pg_notify` when a task's `state`
+changes, the store exposes `store.TaskNotifier`, and `internal/taskevents` wakes
+the long poll. **The poll is not removed.** MySQL and MariaDB implement none of
+this and keep polling.
+
+**Why.** `GET /v1/tasks/{id}/events` re-read the task every 500 ms per waiting
+client — one query per developer per half second, for a row that changes twice
+in a task's life, on a wait somebody is watching.
+
+**Why the poll stays.** A notification can be lost: the listening connection can
+fail and reconnect across a change, a buffer can overflow, and a backend may
+have no mechanism at all. A client that treated a notification as its liveness
+guarantee would hang on the first blip — replacing a small predictable latency
+with a rare unbounded one. So the contract is stated where an implementer will
+read it: *a notification is a hint, never a substitute for reading.*
+
+**Subscribe before reading.** The first version of the hub subscribed and waited
+in one call, which left a window: read the state, the task changes, then
+subscribe — and the waiter sits on the ticker anyway. A test caught it, and the
+API was split into `Subscribe` then `Wait` so the order is expressible. The
+window was the whole feature, silently.
+
+**Only on a change of state.** A heartbeat rewrites `lease_expires_at` every few
+seconds; a trigger on any update would wake every waiter for it and cost more
+than the poll it replaces.
+
+**A trigger, not `pg_notify` in the store.** The notification then covers every
+path that changes a task, including one nobody has written yet and one an
+operator runs by hand. In the application it would have to be repeated in
+`Claim`, `Complete`, `Fail`, `Cancel` and `ReleaseExpired`, and forgetting one
+produces a client that hangs for a full interval on exactly one transition.
+
+**The MySQL migration is a no-op that exists anyway.** Both dialects keep the
+same version numbers, so `nitctl migrate -status` describes one schema rather
+than two. The file says what cannot be done and why, instead of being absent and
+leaving a reader to wonder.

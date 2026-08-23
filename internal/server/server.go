@@ -23,6 +23,7 @@ import (
 	"github.com/NitScm/nit/internal/policyloader"
 	"github.com/NitScm/nit/internal/queue"
 	"github.com/NitScm/nit/internal/synctoken"
+	"github.com/NitScm/nit/internal/taskevents"
 	"github.com/NitScm/nit/pkg/audit"
 	"github.com/NitScm/nit/pkg/blob"
 	"github.com/NitScm/nit/pkg/enforce"
@@ -123,6 +124,10 @@ type Server struct {
 	// operation while doing so.
 	audit *auditlog.Recorder
 
+	// events wakes a long poll when its task moves, on a backend that can say
+	// so. Never the liveness guarantee: the poll stays.
+	events *taskevents.Hub
+
 	mux *http.ServeMux
 
 	// routes records every registered pattern, so a test can prove the OpenAPI
@@ -165,9 +170,10 @@ func New(cfg Config, deps Deps) (*Server, error) {
 	}
 
 	s := &Server{
-		cfg:   cfg,
-		deps:  deps,
-		audit: auditlog.New(deps.Store.Audit(), deps.AuditSink, deps.Log),
+		cfg:    cfg,
+		deps:   deps,
+		audit:  auditlog.New(deps.Store.Audit(), deps.AuditSink, deps.Log),
+		events: taskevents.New(),
 	}
 	s.mux = s.buildRoutes()
 
@@ -248,6 +254,23 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 			s.deps.Log.Error("shutdown failed", "error", err)
 		}
 	}()
+
+	// Started here rather than in New, because it owns a goroutine and a
+	// connection for as long as the server runs, and New has no context to end
+	// them with.
+	//
+	// A backend with no notification mechanism is not an error and not a
+	// warning: MySQL and MariaDB have none, the poll covers it, and the only
+	// difference is up to one interval of latency. It is logged so an operator
+	// can tell which they are running.
+	if started, err := s.events.Run(ctx, s.deps.Store); err != nil {
+		s.deps.Log.Warn("task notifications unavailable, falling back to polling", "error", err)
+	} else if started {
+		s.deps.Log.Info("task notifications enabled")
+	} else {
+		s.deps.Log.Info("task notifications not supported by this backend, polling",
+			"poll", s.cfg.EventPollInterval)
+	}
 
 	s.deps.Log.Info("listening", "addr", s.cfg.Addr)
 

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/NitScm/nit/internal/auth"
+	"github.com/NitScm/nit/internal/taskevents"
 	"github.com/NitScm/nit/pkg/blob"
 	"github.com/NitScm/nit/pkg/protocol"
 	"github.com/NitScm/nit/pkg/store"
@@ -85,6 +86,13 @@ func (s *Server) handleTaskEvents(w http.ResponseWriter, r *http.Request) error 
 	ticker := time.NewTicker(s.cfg.EventPollInterval)
 	defer ticker.Stop()
 
+	// Subscribed before the state below is read, and kept for the whole poll.
+	// The order matters: a task that finishes between the read and the wait
+	// would otherwise leave this client sitting on the ticker, which is exactly
+	// the latency the notification exists to remove.
+	subscription := s.events.Subscribe(task.ID)
+	defer subscription.Close()
+
 	for {
 		if task.State != initial || task.State.Terminal() {
 			return s.writeEvent(ctx, w, task)
@@ -97,12 +105,14 @@ func (s *Server) handleTaskEvents(w http.ResponseWriter, r *http.Request) error 
 			return s.writeEvent(ctx, w, task)
 		}
 
-		select {
-		case <-ctx.Done():
+		// Whichever comes first: a notification that the task moved, or the
+		// poll. The poll is the guarantee — a notification can be dropped, and
+		// a backend may have no notification mechanism at all — and the
+		// notification is what makes a developer's push feel immediate rather
+		// than up to EventPollInterval late.
+		if done := waitForChange(ctx, subscription, ticker.C); done {
 			// The client hung up. Nothing to report to nobody.
 			return nil
-
-		case <-ticker.C:
 		}
 
 		task, err = s.deps.Store.Tasks().ByID(ctx, task.ID)
@@ -272,4 +282,27 @@ func patchDigestOf(task *store.Task) (string, error) {
 	}
 
 	return result.Patch.Digest, nil
+}
+
+// waitForChange blocks until the task may have changed or the client left.
+//
+// It reports whether the context ended, which is the one case with nothing to
+// write back.
+func waitForChange(ctx context.Context, subscription *taskevents.Subscription, tick <-chan time.Time) bool {
+	// Adapted rather than passed through: the hub takes a plain signal so it
+	// cannot become the owner of the poll, which is what keeps the poll the
+	// liveness guarantee.
+	poll := make(chan struct{}, 1)
+
+	go func() {
+		select {
+		case <-ctx.Done():
+		case <-tick:
+			poll <- struct{}{}
+		}
+	}()
+
+	subscription.Wait(ctx, poll)
+
+	return ctx.Err() != nil
 }

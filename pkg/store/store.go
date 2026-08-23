@@ -280,6 +280,34 @@ type AuditPruner interface {
 	PruneAudit(ctx context.Context, before time.Time, batch int) (PruneResult, error)
 }
 
+// TaskNotifier is implemented by backends that can say when a task changed,
+// instead of being asked.
+//
+// Optional, like AuditPruner. A backend that does not implement it is not
+// deficient: PostgreSQL has LISTEN/NOTIFY and MySQL has nothing equivalent, so
+// a caller has to work without one either way.
+//
+// # A notification is a hint, never a substitute for reading
+//
+// This is the whole contract, and getting it wrong is how a client waits
+// forever. A notification may be dropped — the listening connection can fail
+// and reconnect across a change — duplicated, or arrive before the caller can
+// observe the row. So a caller must keep a poll running as its liveness
+// guarantee and treat notifications as what shortens the wait, not what ends
+// it.
+//
+// Implemented properly, that turns a 500 ms poll into a slow backstop and a
+// notification into the thing that actually wakes a developer's `nit push`.
+type TaskNotifier interface {
+	// WatchTasks delivers the id of each task whose state changed, until ctx
+	// is done. The channel is closed when the watch ends.
+	//
+	// It must not block on a slow consumer: an implementation drops rather
+	// than waits, which the "hint, never a substitute" rule above is what
+	// makes safe.
+	WatchTasks(ctx context.Context) (<-chan ID, error)
+}
+
 // PruneResult reports what a purge did, and what it found.
 type PruneResult struct {
 	Removed int64

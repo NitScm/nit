@@ -1,0 +1,21 @@
+-- No equivalent, and none is possible.
+--
+-- The PostgreSQL migration of this version adds a trigger that calls pg_notify,
+-- so a client waiting on `GET /v1/tasks/{id}/events` is woken when its task
+-- moves instead of re-reading the row every 500 ms.
+--
+-- MySQL and MariaDB have no LISTEN/NOTIFY and no way for a trigger to reach a
+-- connection that is not the one that fired it. There is no server-side
+-- mechanism to emulate: a trigger could write to a table, but a client would
+-- still have to poll that table, which is the poll this removes.
+--
+-- So on this backend the long poll stays exactly as it is. `internal/store/mysql`
+-- deliberately does not implement store.TaskNotifier, the server sees that and
+-- keeps its 500 ms ticker, and nothing behaves differently — it is only slower
+-- to notice, by up to one interval.
+--
+-- The version exists so the two dialects stay at the same numbers. A migration
+-- that did nothing on one side and was absent on the other would make
+-- `nitctl migrate -status` describe two different schemas with one list.
+
+SELECT 'no notification mechanism on this backend; see the comment above' AS note;
