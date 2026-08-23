@@ -79,6 +79,12 @@ func TestConformance(t *testing.T) {
 `pkg/store` describes IO rather than performing it — the implementations that
 open connections are in `internal/store/`.
 
+Two ship today, in-memory and PostgreSQL, and MySQL/MariaDB is planned. The
+suite is where a third one earns its place: `ConcurrentDrain` keeps a queue busy
+through claim, complete and reclaim cycles and asserts every task is delivered
+exactly once, which is what a backend reconstructing atomicity without
+`UPDATE … RETURNING` has to get right.
+
 ## What is deliberately not a seam
 
 **Enforcement.** `pkg/enforce` decides what a push may land and what a pull may

@@ -46,6 +46,8 @@ func Run(t *testing.T, newStore Factory) {
 	t.Run("ArtifactExpiry", func(t *testing.T) { testArtifactExpiry(t, newStore) })
 	t.Run("AuditAppendAndQuery", func(t *testing.T) { testAuditAppendAndQuery(t, newStore) })
 	t.Run("ConcurrentClaims", func(t *testing.T) { testConcurrentClaims(t, newStore) })
+	t.Run("ConcurrentDrain", func(t *testing.T) { testConcurrentDrain(t, newStore) })
+	t.Run("CompletionCannotPrecedeStart", func(t *testing.T) { testCompletionCannotPrecedeStart(t, newStore) })
 	t.Run("Sessions", func(t *testing.T) { testSessions(t, newStore) })
 }
 
@@ -795,5 +797,162 @@ func testAuditAppendAndQuery(t *testing.T, newStore Factory) {
 	}
 	if got[1].RuleID != "secrets-are-platform-only" {
 		t.Errorf("rule attribution lost: %q", got[1].RuleID)
+	}
+}
+
+// A queue drained by many workers must deliver every task exactly once, and
+// must never have two of them running on the same partition at the same
+// moment.
+//
+// ConcurrentClaims above checks one round: every worker claims once, and the
+// counts add up. That catches a claim that is obviously wrong. It does not
+// catch one that is only sometimes wrong — a backend that reads the next task
+// and then updates it in two statements races on the gap between them, and the
+// gap is small. This case keeps the queue busy through claim, complete and
+// reclaim cycles until it empties, which is where such a gap is actually
+// exercised.
+//
+// It is written for the backends that do not exist yet. PostgreSQL claims with
+// a single UPDATE … RETURNING and cannot lose this race; a backend whose
+// dialect has no RETURNING has to reconstruct atomicity by other means, and
+// this is what will tell it whether it succeeded.
+func testConcurrentDrain(t *testing.T, newStore Factory) {
+	f := setup(t, newStore)
+	ctx := context.Background()
+
+	const (
+		branches       = 6
+		tasksPerBranch = 5
+		workers        = 12
+		total          = branches * tasksPerBranch
+	)
+
+	offset := time.Duration(0)
+	for b := range branches {
+		for i := range tasksPerBranch {
+			offset += time.Second
+			branch := fmt.Sprintf("feature/%d", b)
+			f.create(t, f.newTask(protocol.TaskPush, branch, fmt.Sprintf("drain-%d-%d", b, i), offset))
+		}
+	}
+
+	var (
+		mu sync.Mutex
+
+		// running is the invariant under test: a partition may hold at most one
+		// task at a time, and it must be true at every instant rather than only
+		// at the end.
+		running = map[string]store.ID{}
+		claims  = map[store.ID]int{}
+		wg      sync.WaitGroup
+	)
+
+	deadline := time.Now().Add(20 * time.Second)
+
+	for w := range workers {
+		wg.Add(1)
+
+		go func(worker int) {
+			defer wg.Done()
+
+			holder := fmt.Sprintf("worker-%d", worker)
+
+			for {
+				mu.Lock()
+				done := len(claims) >= total
+				mu.Unlock()
+
+				if done || time.Now().After(deadline) {
+					return
+				}
+
+				// One instant for the whole cycle: a task cannot finish before it
+				// started, and PostgreSQL has a check constraint that says so.
+				at := f.now.Add(time.Hour)
+
+				task, err := f.claim(t, holder, at)
+				if errors.Is(err, store.ErrNoTask) {
+					// Another worker holds every non-empty partition. Yield
+					// rather than spin: the point is contention, not a busy
+					// loop.
+					time.Sleep(time.Millisecond)
+					continue
+				}
+				if err != nil {
+					t.Errorf("Claim: %v", err)
+					return
+				}
+
+				mu.Lock()
+				if held, busy := running[task.PartitionKey]; busy {
+					t.Errorf("partition %q handed to two workers at once: %s and %s",
+						task.PartitionKey, held, task.ID)
+				}
+				running[task.PartitionKey] = task.ID
+				claims[task.ID]++
+				mu.Unlock()
+
+				if err := f.store.Tasks().Complete(ctx, task.ID, task.Lease.Token, []byte(`{}`), at); err != nil {
+					t.Errorf("Complete %s: %v", task.ID, err)
+				}
+
+				mu.Lock()
+				delete(running, task.PartitionKey)
+				mu.Unlock()
+			}
+		}(w)
+	}
+
+	wg.Wait()
+
+	if len(claims) != total {
+		t.Errorf("%d distinct tasks claimed, want %d", len(claims), total)
+	}
+
+	// Exactly once. A task claimed twice is a push applied twice.
+	for id, n := range claims {
+		if n != 1 {
+			t.Errorf("task %s was claimed %d times", id, n)
+		}
+	}
+}
+
+// A task cannot finish before it started.
+//
+// This case exists because a wrong test found the divergence rather than a
+// right one: a drain that completed tasks at the wrong instant was refused by
+// PostgreSQL, which carries a check constraint, and accepted in silence by the
+// in-memory store. The two are supposed to be indistinguishable to a caller,
+// and a backend author who did not know which behaviour was the contract would
+// discover it the same way — from a failure somewhere else, much later.
+//
+// The refusal is the contract. A finished_at before started_at is not a
+// tolerable rounding of the truth; it is a row that makes every duration
+// report and every audit reconstruction wrong.
+func testCompletionCannotPrecedeStart(t *testing.T, newStore Factory) {
+	f := setup(t, newStore)
+	ctx := context.Background()
+
+	f.create(t, f.newTask(protocol.TaskPush, "main", "before-start", time.Second))
+
+	claimedAt := f.now.Add(time.Hour)
+
+	task, err := f.claim(t, "worker", claimedAt)
+	if err != nil {
+		t.Fatalf("Claim: %v", err)
+	}
+
+	err = f.store.Tasks().Complete(ctx, task.ID, task.Lease.Token, []byte(`{}`), claimedAt.Add(-time.Minute))
+	if err == nil {
+		t.Fatal("completing before the task started was accepted")
+	}
+
+	// And the task is untouched: refusing has to mean not doing it.
+	after, err := f.store.Tasks().ByID(ctx, task.ID)
+	if err != nil {
+		t.Fatalf("ByID: %v", err)
+	}
+	if after.State != protocol.TaskRunning {
+		t.Errorf("state = %s, want it still running", after.State)
 	}
 }

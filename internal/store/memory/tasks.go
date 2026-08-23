@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"time"
 
@@ -207,6 +208,9 @@ func (s *taskStore) Complete(_ context.Context, id store.ID, token string, resul
 	if err := checkLease(t, token); err != nil {
 		return err
 	}
+	if err := checkFinishOrder(t, at); err != nil {
+		return err
+	}
 
 	t.State = protocol.TaskSucceeded
 	t.Result = append([]byte(nil), result...)
@@ -356,6 +360,21 @@ func (s *taskStore) releaseExpiredLocked(now time.Time) int {
 
 // checkLease enforces fencing: a transition is only valid from the worker
 // holding the current lease.
+// checkFinishOrder refuses a completion timestamped before the task started.
+//
+// PostgreSQL enforces this with a check constraint. The two backends have to be
+// indistinguishable to a caller, and a row whose finished_at precedes its
+// started_at makes every duration report and every audit reconstruction wrong —
+// so this is the contract rather than a quirk of one schema.
+func checkFinishOrder(t *store.Task, at time.Time) error {
+	if t.StartedAt == nil || !at.Before(*t.StartedAt) {
+		return nil
+	}
+
+	return fmt.Errorf("%w: a task cannot finish (%s) before it started (%s)",
+		store.ErrConflict, at.UTC(), t.StartedAt.UTC())
+}
+
 func checkLease(t *store.Task, token string) error {
 	if t.State != protocol.TaskRunning || t.Lease == nil {
 		return store.ErrLeaseLost
