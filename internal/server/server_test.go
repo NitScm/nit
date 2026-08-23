@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/NitScm/nit/internal/auth"
-	"github.com/NitScm/nit/internal/blob"
+	"github.com/NitScm/nit/internal/blob/filesystem"
 	"github.com/NitScm/nit/internal/compress"
 	"github.com/NitScm/nit/internal/policyloader"
 	"github.com/NitScm/nit/internal/queue"
@@ -21,6 +21,7 @@ import (
 	"github.com/NitScm/nit/internal/store/memory"
 	"github.com/NitScm/nit/internal/synctoken"
 	"github.com/NitScm/nit/internal/taskspec"
+	"github.com/NitScm/nit/pkg/blob"
 	"github.com/NitScm/nit/pkg/policy"
 	"github.com/NitScm/nit/pkg/protocol"
 	"github.com/NitScm/nit/pkg/store"
@@ -121,7 +122,7 @@ func newFixtureWith(t *testing.T, adminGroups []policy.GroupID, origins []string
 	ctx := context.Background()
 	f := &fixture{t: t, store: memory.New()}
 
-	blobs, err := blob.NewFS(t.TempDir())
+	blobs, err := filesystem.New(t.TempDir())
 	if err != nil {
 		t.Fatalf("NewFS: %v", err)
 	}

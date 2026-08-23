@@ -183,13 +183,20 @@ of a correlated subquery.
 
 ## 6. Storage and memory
 
-**The blob store is a filesystem** (`internal/blob`, `blob.NewFS`). There is no
-object-storage backend, so `nitd` and every worker must share one volume. Across
-hosts that means NFS or EFS: a single mount point, and its latency on the write
-and read of every push.
+**The blob store is a filesystem** (`internal/blob/filesystem`). The community
+edition ships no object-storage backend, so `nitd` and every worker must share
+one volume. Across hosts that means NFS or EFS: a single mount point, and its
+latency on the write and read of every push.
 
-*The work.* An S3-compatible backend behind the existing `blob.Store` interface.
-It also removes the constraint that shapes the whole topology today.
+*What exists.* `blob.Store` is a public seam in `pkg/blob`, documented in
+[`EXTENSIONS.md`](EXTENSIONS.md) with the three obligations an implementation
+carries. Anyone can write a backend against it; the commercial edition ships an
+S3-compatible one.
+
+*What is not solved by that.* A shared volume remains the answer here, and it is
+a real answer rather than a placeholder — but it is the constraint that shapes
+the topology, and an operator sizing a deployment should count its latency on
+every push.
 
 **Patches are held in memory.** Both the control plane and the worker read a
 patch with `io.ReadAll` bounded by `storage.max_patch_bytes` (100 MiB default),

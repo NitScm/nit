@@ -6,9 +6,9 @@ import (
 	"errors"
 	"io"
 
-	"github.com/NitScm/nit/internal/blob"
 	"github.com/NitScm/nit/internal/compress"
 	"github.com/NitScm/nit/internal/taskspec"
+	"github.com/NitScm/nit/pkg/blob"
 	"github.com/NitScm/nit/pkg/gitx"
 	"github.com/NitScm/nit/pkg/protocol"
 	"github.com/NitScm/nit/pkg/store"

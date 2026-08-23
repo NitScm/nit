@@ -13,13 +13,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/NitScm/nit/internal/blob"
+	"github.com/NitScm/nit/internal/blob/filesystem"
 	"github.com/NitScm/nit/internal/compress"
 	"github.com/NitScm/nit/internal/policyloader"
 	"github.com/NitScm/nit/internal/store/memory"
 	"github.com/NitScm/nit/internal/synctoken"
 	"github.com/NitScm/nit/internal/taskspec"
 	"github.com/NitScm/nit/internal/worker"
+	"github.com/NitScm/nit/pkg/blob"
 	"github.com/NitScm/nit/pkg/gitx"
 	"github.com/NitScm/nit/pkg/patch"
 	"github.com/NitScm/nit/pkg/policy"
@@ -167,7 +168,7 @@ func newHarness(t *testing.T) *harness {
 	// A bare repo refuses a push to its checked-out branch only when it is not
 	// bare; nothing to configure here.
 
-	blobs, err := blob.NewFS(t.TempDir())
+	blobs, err := filesystem.New(t.TempDir())
 	if err != nil {
 		t.Fatalf("NewFS: %v", err)
 	}

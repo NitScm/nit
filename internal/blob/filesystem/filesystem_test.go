@@ -1,9 +1,10 @@
-package blob
+package filesystem
 
 import (
 	"bytes"
 	"context"
 	"errors"
+	"github.com/NitScm/nit/pkg/blob"
 	"io"
 	"os"
 	"path/filepath"
@@ -11,10 +12,10 @@ import (
 	"testing"
 )
 
-func newStore(t *testing.T) *FS {
+func newStore(t *testing.T) *Store {
 	t.Helper()
 
-	s, err := NewFS(t.TempDir())
+	s, err := New(t.TempDir())
 	if err != nil {
 		t.Fatalf("NewFS: %v", err)
 	}
@@ -32,8 +33,8 @@ func TestPutGetRoundTrip(t *testing.T) {
 		t.Fatalf("Put: %v", err)
 	}
 
-	if desc.Digest != Digest(payload) {
-		t.Errorf("Digest = %q, want %q", desc.Digest, Digest(payload))
+	if desc.Digest != blob.Digest(payload) {
+		t.Errorf("blob.Digest = %q, want %q", desc.Digest, blob.Digest(payload))
 	}
 	if desc.Size != int64(len(payload)) {
 		t.Errorf("Size = %d, want %d", desc.Size, len(payload))
@@ -80,14 +81,14 @@ func TestPutRejectsDigestMismatch(t *testing.T) {
 	ctx := context.Background()
 	s := newStore(t)
 
-	wrong := Digest([]byte("something else"))
+	wrong := blob.Digest([]byte("something else"))
 
 	_, err := s.Put(ctx, strings.NewReader("actual content"), wrong, 0)
-	if !errors.Is(err, ErrDigestMismatch) {
-		t.Fatalf("got %v, want ErrDigestMismatch", err)
+	if !errors.Is(err, blob.ErrDigestMismatch) {
+		t.Fatalf("got %v, want blob.ErrDigestMismatch", err)
 	}
 
-	if _, err := s.Stat(ctx, wrong); !errors.Is(err, ErrNotFound) {
+	if _, err := s.Stat(ctx, wrong); !errors.Is(err, blob.ErrNotFound) {
 		t.Errorf("a rejected upload left a blob behind: %v", err)
 	}
 }
@@ -97,8 +98,8 @@ func TestPutEnforcesMaxSize(t *testing.T) {
 	s := newStore(t)
 
 	_, err := s.Put(ctx, strings.NewReader("0123456789"), "", 4)
-	if !errors.Is(err, ErrTooLarge) {
-		t.Fatalf("got %v, want ErrTooLarge", err)
+	if !errors.Is(err, blob.ErrTooLarge) {
+		t.Fatalf("got %v, want blob.ErrTooLarge", err)
 	}
 }
 
@@ -117,7 +118,7 @@ func TestFailedPutLeavesNoTemporaryFile(t *testing.T) {
 	ctx := context.Background()
 
 	root := t.TempDir()
-	s, err := NewFS(root)
+	s, err := New(root)
 	if err != nil {
 		t.Fatalf("NewFS: %v", err)
 	}
@@ -144,8 +145,8 @@ func TestGetMissing(t *testing.T) {
 	ctx := context.Background()
 	s := newStore(t)
 
-	if _, err := s.Get(ctx, Digest([]byte("absent"))); !errors.Is(err, ErrNotFound) {
-		t.Errorf("got %v, want ErrNotFound", err)
+	if _, err := s.Get(ctx, blob.Digest([]byte("absent"))); !errors.Is(err, blob.ErrNotFound) {
+		t.Errorf("got %v, want blob.ErrNotFound", err)
 	}
 }
 
@@ -153,7 +154,7 @@ func TestDeleteIsIdempotent(t *testing.T) {
 	ctx := context.Background()
 	s := newStore(t)
 
-	digest := Digest([]byte("x"))
+	digest := blob.Digest([]byte("x"))
 
 	if _, err := s.Put(ctx, strings.NewReader("x"), digest, 0); err != nil {
 		t.Fatalf("Put: %v", err)
@@ -169,9 +170,9 @@ func TestDeleteIsIdempotent(t *testing.T) {
 // Digests build file paths, so a malformed one must never reach the
 // filesystem.
 func TestValidateDigest(t *testing.T) {
-	valid := Digest([]byte("ok"))
-	if err := ValidateDigest(valid); err != nil {
-		t.Errorf("ValidateDigest(%q) = %v", valid, err)
+	valid := blob.Digest([]byte("ok"))
+	if err := blob.ValidateDigest(valid); err != nil {
+		t.Errorf("blob.ValidateDigest(%q) = %v", valid, err)
 	}
 
 	invalid := []string{
@@ -185,8 +186,8 @@ func TestValidateDigest(t *testing.T) {
 	}
 
 	for _, d := range invalid {
-		if err := ValidateDigest(d); err == nil {
-			t.Errorf("ValidateDigest(%q) accepted a malformed digest", d)
+		if err := blob.ValidateDigest(d); err == nil {
+			t.Errorf("blob.ValidateDigest(%q) accepted a malformed digest", d)
 		}
 	}
 }

@@ -52,8 +52,7 @@ to join on one.
 
 ### `store.Store` — where the state lives
 
-The queue, sync points, sessions and the audit trail. Two implementations ship:
-in-memory and PostgreSQL.
+The queue, sync points, sessions and the audit trail.
 
 What makes this one worth writing against is `pkg/store/storetest`: a
 conformance suite that runs the *same* tests against any implementation —
@@ -79,11 +78,43 @@ func TestConformance(t *testing.T) {
 `pkg/store` describes IO rather than performing it — the implementations that
 open connections are in `internal/store/`.
 
-Two ship today, in-memory and PostgreSQL, and MySQL/MariaDB is planned. The
-suite is where a third one earns its place: `ConcurrentDrain` keeps a queue busy
-through claim, complete and reclaim cycles and asserts every task is delivered
-exactly once, which is what a backend reconstructing atomicity without
-`UPDATE … RETURNING` has to get right.
+Three ship today: in-memory, PostgreSQL, and MySQL/MariaDB. The suite is where
+each one earned its place, and `ConcurrentDrain` is the test that matters — it
+keeps a queue busy through claim, complete and reclaim cycles and asserts every
+task is delivered exactly once. That is what a backend reconstructing atomicity
+without `UPDATE … RETURNING` has to get right, and it is what caught an InnoDB
+deadlock the MySQL backend had on its first working version.
+
+### `blob.Store` — where patch payloads live
+
+Uploaded push patches and generated pull patches, addressed by the SHA-256 of
+their bytes. One implementation ships: a directory, in
+`internal/blob/filesystem`.
+
+Content addressing is what makes this replaceable cheaply. A blob's name is
+derived from its bytes, so an implementation has nothing to coordinate: writing
+the same bytes twice is the same write, and nothing has to be told what a digest
+means.
+
+Three obligations an implementation carries, none of which the signatures state:
+
+- **`Put` is atomic.** A reader must never see a partially written blob under a
+  digest that looks complete. The digest is what the rest of the system trusts
+  in place of re-reading the bytes, so a torn write is not a corrupt file — it
+  is a patch that passes verification and applies the wrong thing.
+- **`Put` verifies what it stored** against the announced digest rather than
+  trusting the caller.
+- **`Get` returns `ErrNotFound`** for a digest never written, rather than empty
+  content. A push whose patch has gone missing has to fail; applying nothing
+  would report success for a change that never landed.
+
+The reason to write one is deployment shape rather than performance. The
+filesystem store requires that `nitd` and every worker see the same directory —
+one host, or a shared volume. An implementation backed by object storage removes
+that constraint, which is why this is a seam rather than an internal detail.
+
+Set one on `server.Deps.Blobs` and `worker.Deps.Blobs`. Both must be the same
+store: `nitd` writes the authorized patch and a worker reads it back.
 
 ## What is deliberately not a seam
 
@@ -107,7 +138,7 @@ These are the product, and their reasoning is in [`DECISIONS.md`](DECISIONS.md)
 ## Proposing a new seam
 
 Open an issue first. A public interface is a promise, and the bar is that it
-has to be useful to somebody with no unusual requirements — the three above
+has to be useful to somebody with no unusual requirements — the four above
 each are.
 
 ## On the commercial edition
@@ -122,3 +153,10 @@ what you are writing from the fact that you are writing it here, without
 checking which folder you are in. Everything in this repository is Apache 2.0,
 including every seam above, and an implementation you contribute stays that
 way.
+
+What that means in practice, using `blob.Store` as the example: the interface is
+here and Apache 2.0, the filesystem implementation is here and Apache 2.0, and
+the S3-compatible implementation the commercial edition ships is not. Nothing
+stops you from writing your own against the same interface — the seam is not a
+stub waiting for a licence key, and if it ever behaves like one, that is a bug
+worth reporting.

@@ -10,10 +10,10 @@ import (
 	"time"
 
 	"github.com/NitScm/nit/internal/auth"
-	"github.com/NitScm/nit/internal/blob"
 	"github.com/NitScm/nit/internal/compress"
 	"github.com/NitScm/nit/internal/queue"
 	"github.com/NitScm/nit/internal/taskspec"
+	"github.com/NitScm/nit/pkg/blob"
 	"github.com/NitScm/nit/pkg/enforce"
 	"github.com/NitScm/nit/pkg/patch"
 	"github.com/NitScm/nit/pkg/protocol"

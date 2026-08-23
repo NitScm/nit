@@ -30,7 +30,7 @@ import (
 	"sync"
 	"syscall"
 
-	"github.com/NitScm/nit/internal/blob"
+	"github.com/NitScm/nit/internal/blob/filesystem"
 	"github.com/NitScm/nit/internal/bootstrap"
 	"github.com/NitScm/nit/internal/buildinfo"
 	"github.com/NitScm/nit/internal/policyloader"
@@ -99,7 +99,7 @@ func run(args []string) error {
 		return err
 	}
 
-	blobs, err := blob.NewFS(cfg.BlobDir)
+	blobs, err := filesystem.New(cfg.BlobDir)
 	if err != nil {
 		return err
 	}

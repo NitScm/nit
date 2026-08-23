@@ -785,3 +785,46 @@ mutating operations retry once InnoDB names them the victim — a deadlock rolls
 the transaction back entirely, so repeating it is always safe. PostgreSQL never
 exhibited this, which is the point: a second backend does not merely need
 translating, it needs running.
+
+---
+
+## D35 — The blob store is a seam; object storage is the commercial implementation
+
+**Decision.** `blob.Store` moves to `pkg/blob` and becomes a documented
+extension point. `internal/blob/filesystem` is the implementation the community
+edition ships. The S3-compatible one belongs to the commercial edition, in the
+separate module described in `docs/EXTENSIONS.md`.
+
+**Why it is a legitimate seam** and not an API frozen for commercial reasons —
+the thing D-none-of-the-above warns about and `EXTENSIONS.md` sets a bar for:
+the interface predates the commercial question, the reason to replace it is
+deployment shape rather than performance, and an operator running Ceph, GCS or
+Azure has the same reason to write one as we do. It sits at a storage boundary
+rather than in a hot path, so it leaks no internals. A seam whose only possible
+implementer is the vendor would fail all three tests; this passes them.
+
+**What content addressing buys here.** A blob's name is derived from its bytes,
+so an implementation coordinates nothing: writing the same bytes twice is the
+same write. That is what makes a second backend cheap enough to be worth
+offering as a seam rather than a rewrite.
+
+**The obligation the signatures do not state**, and the reason it is written
+down: `Put` must be atomic. A reader that sees a partially written blob under a
+digest that looks complete does not get a corrupt file — it gets a patch that
+passes verification and applies the wrong thing. The filesystem implementation
+writes to a temporary file and renames.
+
+**The concern this decision accepts.** The worker reads blobs directly, so a
+community deployment across several hosts needs a shared volume. Making object
+storage commercial therefore prices a *deployment topology* rather than an
+integration, which is the failure mode `saas-thinking/09` argues against for
+caching. It is accepted because the shared volume is a real, documented, working
+answer — NFS or EFS, one mount point — where a missing pull cache would have
+left no answer at all. `SCALING.md` §6 states the latency cost so nobody sizes a
+deployment without it.
+
+**If that stops being true** — if the shared-volume path turns out to block
+evaluations rather than merely complicate them — the fix is not to move the S3
+backend into the community edition. It is for `nitd` to serve blobs to workers
+over the API it already exposes, which removes the shared volume for everyone
+and costs the commercial edition nothing it was selling.

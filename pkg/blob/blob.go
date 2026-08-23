@@ -1,10 +1,18 @@
-// Package blob stores patch payloads, addressed by the hash of their bytes.
+// Package blob is the contract for storing patch payloads, addressed by the
+// hash of their bytes.
 //
 // Content addressing is not decoration. It deduplicates repeated uploads of the
 // same change, it lets a transfer resume without server-side session state, and
 // it turns integrity checking into something the client can verify itself. It
 // also makes the store trivially idempotent: writing the same bytes twice is
 // the same write.
+//
+// Like pkg/store, this package declares an interface and performs no IO of its
+// own. The filesystem implementation lives in internal/blob, and the interface
+// interface is an extension point: an operator whose infrastructure is not a
+// filesystem —
+// object storage, a content-addressed store they already run — implements
+// Store and passes it in. See docs/EXTENSIONS.md.
 package blob
 
 import (
@@ -39,6 +47,14 @@ type Descriptor struct {
 }
 
 // Store persists opaque byte payloads.
+//
+// An implementation has three obligations beyond the signatures. Put must be
+// atomic: a reader must never observe a partially written blob under a digest
+// that looks complete, because the digest is what the rest of the system trusts
+// instead of re-reading the bytes. Put must verify what it stored against
+// expected when one is given, rather than trusting the caller. And Get must
+// return ErrNotFound rather than empty content for a digest that was never
+// written — a push whose patch is missing has to fail, not apply nothing.
 type Store interface {
 	// Put streams r into the store and returns its descriptor.
 	//
@@ -82,30 +98,4 @@ func ValidateDigest(digest string) error {
 	}
 
 	return nil
-}
-
-// limitedReader aborts with ErrTooLarge rather than truncating silently, which
-// would store a corrupt patch under a digest that looks valid.
-type limitedReader struct {
-	r         io.Reader
-	remaining int64
-}
-
-func (l *limitedReader) Read(p []byte) (int, error) {
-	if l.remaining < 0 {
-		return 0, ErrTooLarge
-	}
-
-	if int64(len(p)) > l.remaining+1 {
-		p = p[:l.remaining+1]
-	}
-
-	n, err := l.r.Read(p)
-	l.remaining -= int64(n)
-
-	if l.remaining < 0 {
-		return n, ErrTooLarge
-	}
-
-	return n, err
 }

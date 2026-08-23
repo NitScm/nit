@@ -72,14 +72,18 @@ pkg/         pure domain — no IO, no clock, no logging, importable by anyone
   protocol/  wire types shared by CLI, control plane and workers
   gitx/      git operations behind an interface (exec implementation)
   forge/     hosting provider abstraction (GitHub, GitLab, Gitea, plain SSH)
+  store/     the persistence contract, and storetest/ which proves a backend
+  blob/      the contract for content-addressed patch payloads
+  audit/     the sink an audit record can additionally be written to
 
 internal/    wiring and IO — not importable from outside the module
   server/    HTTP handlers, middleware, routing
   worker/     task handlers (push, pull)
   integration/ end-to-end tests over the whole loop
-  store/     PostgreSQL repositories
+  store/     store backends: postgres, mysql (MariaDB too), memory
+  gitcache/  a bare mirror per repository, a worktree per task
   queue/     branch-partitioned queue and leases
-  blob/      content-addressed blob store (filesystem, then S3)
+  blob/      filesystem/ — the content-addressed blob store nit ships
   auth/      sessions and tokens
   synctoken/ signed, opaque sync tokens
   policyloader/ the compiled bundle, hot-reloaded
@@ -283,7 +287,7 @@ Bottom-up, because the valuable part is testable without infrastructure.
 3. **`pkg/enforce`** — patch x policy. Done. Fail-closed on push, filtering on
    pull, guards on top.
 4. **`pkg/gitx`, `pkg/forge`, `pkg/protocol`** — interfaces and wire types. Done.
-5. **`internal/store`, `internal/queue`, `internal/blob`** — persistence, queue,
+5. **`internal/store`, `internal/queue`, `internal/blob/filesystem`** — persistence, queue,
    leases, artifacts. Done. Two store backends (in-memory and PostgreSQL) share
    one conformance suite; the queue implements branch partitioning, lease expiry
    and fencing, verified against real PostgreSQL under concurrency.

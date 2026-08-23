@@ -23,11 +23,11 @@ import (
 	"time"
 
 	"github.com/NitScm/nit/internal/auditlog"
-	"github.com/NitScm/nit/internal/blob"
 	"github.com/NitScm/nit/internal/gitcache"
 	"github.com/NitScm/nit/internal/policyloader"
 	"github.com/NitScm/nit/internal/synctoken"
 	"github.com/NitScm/nit/pkg/audit"
+	"github.com/NitScm/nit/pkg/blob"
 	"github.com/NitScm/nit/pkg/enforce"
 	"github.com/NitScm/nit/pkg/forge"
 	"github.com/NitScm/nit/pkg/gitx"

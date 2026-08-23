@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/NitScm/nit/internal/auth"
-	"github.com/NitScm/nit/internal/blob"
+	"github.com/NitScm/nit/pkg/blob"
 	"github.com/NitScm/nit/pkg/protocol"
 	"github.com/NitScm/nit/pkg/store"
 )
