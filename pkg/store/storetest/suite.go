@@ -18,9 +18,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/NitScm/nit/internal/store"
 	"github.com/NitScm/nit/pkg/policy"
 	"github.com/NitScm/nit/pkg/protocol"
+	"github.com/NitScm/nit/pkg/store"
 )
 
 // Factory builds a fresh, empty store for one test.

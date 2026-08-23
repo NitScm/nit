@@ -30,7 +30,6 @@ import (
 	"github.com/NitScm/nit/internal/policyloader"
 	"github.com/NitScm/nit/internal/queue"
 	"github.com/NitScm/nit/internal/server"
-	"github.com/NitScm/nit/internal/store"
 	"github.com/NitScm/nit/internal/store/memory"
 	"github.com/NitScm/nit/internal/synctoken"
 	"github.com/NitScm/nit/internal/worker"
@@ -38,6 +37,7 @@ import (
 	"github.com/NitScm/nit/pkg/patch"
 	"github.com/NitScm/nit/pkg/policy"
 	"github.com/NitScm/nit/pkg/protocol"
+	"github.com/NitScm/nit/pkg/store"
 )
 
 type stack struct {

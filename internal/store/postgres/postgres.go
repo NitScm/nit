@@ -1,7 +1,7 @@
 // Package postgres implements the store interfaces on PostgreSQL.
 //
 // It is the production backend. Correctness of the queue semantics is not
-// asserted here but in internal/store/storetest, the conformance suite this
+// asserted here but in pkg/store/storetest, the conformance suite this
 // implementation shares with the in-memory one: the two must be
 // indistinguishable to a caller, and only a shared suite can guarantee that.
 //
@@ -23,8 +23,8 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/NitScm/nit/internal/store"
 	"github.com/NitScm/nit/pkg/policy"
+	"github.com/NitScm/nit/pkg/store"
 )
 
 // Store is a PostgreSQL-backed store.Store.

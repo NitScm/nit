@@ -10,9 +10,9 @@ import (
 	"context"
 	"log/slog"
 
-	"github.com/NitScm/nit/internal/store"
 	"github.com/NitScm/nit/pkg/audit"
 	"github.com/NitScm/nit/pkg/policy"
+	"github.com/NitScm/nit/pkg/store"
 )
 
 // Recorder persists decisions and fans them out.

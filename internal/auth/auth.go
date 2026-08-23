@@ -22,8 +22,8 @@ import (
 	"time"
 
 	"github.com/NitScm/nit/internal/policyloader"
-	"github.com/NitScm/nit/internal/store"
 	"github.com/NitScm/nit/pkg/policy"
+	"github.com/NitScm/nit/pkg/store"
 )
 
 // TokenPrefix marks a nit token.

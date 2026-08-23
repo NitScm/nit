@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/NitScm/nit/internal/store"
 	"github.com/NitScm/nit/pkg/protocol"
+	"github.com/NitScm/nit/pkg/store"
 )
 
 func storeID(s string) store.ID { return store.ID(s) }

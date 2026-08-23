@@ -23,12 +23,12 @@ import (
 	"github.com/NitScm/nit/internal/blob"
 	"github.com/NitScm/nit/internal/policyloader"
 	"github.com/NitScm/nit/internal/queue"
-	"github.com/NitScm/nit/internal/store"
 	"github.com/NitScm/nit/internal/synctoken"
 	"github.com/NitScm/nit/pkg/audit"
 	"github.com/NitScm/nit/pkg/enforce"
 	"github.com/NitScm/nit/pkg/policy"
 	"github.com/NitScm/nit/pkg/protocol"
+	"github.com/NitScm/nit/pkg/store"
 )
 
 // Config holds the tunables of a server.

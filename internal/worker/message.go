@@ -5,8 +5,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/NitScm/nit/internal/store"
 	"github.com/NitScm/nit/internal/taskspec"
+	"github.com/NitScm/nit/pkg/store"
 )
 
 // Trailers on the commit nit publishes.

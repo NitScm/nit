@@ -7,13 +7,13 @@ import (
 	"errors"
 
 	"github.com/NitScm/nit/internal/compress"
-	"github.com/NitScm/nit/internal/store"
 	"github.com/NitScm/nit/internal/synctoken"
 	"github.com/NitScm/nit/internal/taskspec"
 	"github.com/NitScm/nit/pkg/enforce"
 	"github.com/NitScm/nit/pkg/patch"
 	"github.com/NitScm/nit/pkg/policy"
 	"github.com/NitScm/nit/pkg/protocol"
+	"github.com/NitScm/nit/pkg/store"
 )
 
 // handlePull produces the filtered diff a developer is allowed to receive.

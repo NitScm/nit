@@ -25,7 +25,6 @@ import (
 	"github.com/NitScm/nit/internal/auditlog"
 	"github.com/NitScm/nit/internal/blob"
 	"github.com/NitScm/nit/internal/policyloader"
-	"github.com/NitScm/nit/internal/store"
 	"github.com/NitScm/nit/internal/synctoken"
 	"github.com/NitScm/nit/pkg/audit"
 	"github.com/NitScm/nit/pkg/enforce"
@@ -33,6 +32,7 @@ import (
 	"github.com/NitScm/nit/pkg/gitx"
 	"github.com/NitScm/nit/pkg/policy"
 	"github.com/NitScm/nit/pkg/protocol"
+	"github.com/NitScm/nit/pkg/store"
 )
 
 // Config holds a worker's tunables.

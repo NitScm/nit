@@ -4,9 +4,9 @@ import (
 	"net/http"
 
 	"github.com/NitScm/nit/internal/auth"
-	"github.com/NitScm/nit/internal/store"
 	"github.com/NitScm/nit/pkg/policy"
 	"github.com/NitScm/nit/pkg/protocol"
+	"github.com/NitScm/nit/pkg/store"
 )
 
 // WhoAmI describes the authenticated caller.

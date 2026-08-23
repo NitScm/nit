@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/NitScm/nit/internal/store"
 	"github.com/NitScm/nit/internal/store/postgres"
-	"github.com/NitScm/nit/internal/store/storetest"
 	"github.com/NitScm/nit/pkg/policy"
+	"github.com/NitScm/nit/pkg/store"
+	"github.com/NitScm/nit/pkg/store/storetest"
 )
 
 // TestConformance runs the shared store suite against PostgreSQL.

@@ -55,7 +55,7 @@ to join on one.
 The queue, sync points, sessions and the audit trail. Two implementations ship:
 in-memory and PostgreSQL.
 
-What makes this one worth writing against is `internal/store/storetest`: a
+What makes this one worth writing against is `pkg/store/storetest`: a
 conformance suite that runs the *same* tests against any implementation —
 partition exclusion, fencing, lease expiry, idempotency, concurrent claims. A
 backend is therefore provable rather than hopeful. Three real bugs in the
@@ -64,6 +64,20 @@ rather than a mock.
 
 If you write a backend, run the suite. If it passes, the queue's guarantees
 hold.
+
+The interface and the suite are in `pkg/` precisely so a backend can live
+outside this module and still be held to the same tests:
+
+```go
+import "github.com/NitScm/nit/pkg/store/storetest"
+
+func TestConformance(t *testing.T) {
+    storetest.Run(t, func(t *testing.T) store.Store { return open(t) })
+}
+```
+
+`pkg/store` describes IO rather than performing it — the implementations that
+open connections are in `internal/store/`.
 
 ## What is deliberately not a seam
 

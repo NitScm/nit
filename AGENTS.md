@@ -31,8 +31,16 @@ This document describes a set of rules and conventions maintainers use in this r
 
 ## Repo conventions
 
-* `pkg/` is pure: no database, no filesystem, no network, no clock. `internal/`
-  does the IO. A change to `pkg/` that seems to need IO belongs one layer out.
+* `pkg/` performs no IO: no database, no filesystem, no network, no clock.
+  `internal/` does. A change to `pkg/` that seems to need IO belongs one layer
+  out.
+
+  It may *describe* IO. `pkg/store` is the interface a backend implements and
+  `pkg/store/storetest` is the suite that proves one correct; both are
+  contracts, and neither touches anything on its own. The implementations live
+  in `internal/store/`. The rule exists so the authorization path is testable
+  without infrastructure, and an interface does not threaten that — a package
+  that opened a connection would.
 
 * Design decisions are numbered in `docs/DECISIONS.md`. A change contradicting
   one adds an entry superseding it rather than working around it in code.

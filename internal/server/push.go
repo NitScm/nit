@@ -13,11 +13,11 @@ import (
 	"github.com/NitScm/nit/internal/blob"
 	"github.com/NitScm/nit/internal/compress"
 	"github.com/NitScm/nit/internal/queue"
-	"github.com/NitScm/nit/internal/store"
 	"github.com/NitScm/nit/internal/taskspec"
 	"github.com/NitScm/nit/pkg/enforce"
 	"github.com/NitScm/nit/pkg/patch"
 	"github.com/NitScm/nit/pkg/protocol"
+	"github.com/NitScm/nit/pkg/store"
 )
 
 // handlePush accepts a change, authorizes it, and queues the work.

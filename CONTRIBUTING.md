@@ -43,7 +43,7 @@ mock.
 
 The convention most likely to trip you up, and the one we care about most:
 
-**`pkg/` is pure. `internal/` does the IO.**
+**`pkg/` performs no IO. `internal/` does.**
 
 `pkg/policy`, `pkg/enforce` and `pkg/patch` decide who may read and write what.
 They take values and return values: no database, no filesystem, no network, no
@@ -55,6 +55,12 @@ without infrastructure is what makes them trustworthy.
 If a change to `pkg/` seems to need IO, it almost certainly belongs one layer
 out. Open an issue before working around it.
 
+It may *describe* IO, which is a different thing. `pkg/store` is the interface
+a storage backend implements and `pkg/store/storetest` is the conformance suite
+that proves one correct — both are contracts that touch nothing on their own,
+and they are in `pkg/` so a backend can be written and tested from outside this
+module. The implementations are in `internal/store/`.
+
 ```
 pkg/patch      split a patch at diff --git boundaries, byte-exactly
 pkg/policy     compile a bundle, evaluate a request
@@ -62,6 +68,8 @@ pkg/enforce    push and pull enforcement, guards
 pkg/gitx       the git interface (the exec implementation lives here)
 pkg/forge      hosting-provider drivers
 pkg/protocol   the wire types
+pkg/audit      where a decision record goes after it is made
+pkg/store      what a storage backend must implement, and the suite that proves it
 
 internal/…     store, queue, blob, auth, server, worker, client, flow, …
 cmd/…          nit, nitd, nit-worker, nitctl

@@ -7,9 +7,9 @@ import (
 	"time"
 
 	"github.com/NitScm/nit/internal/auditlog"
-	"github.com/NitScm/nit/internal/store"
 	"github.com/NitScm/nit/pkg/audit"
 	"github.com/NitScm/nit/pkg/policy"
+	"github.com/NitScm/nit/pkg/store"
 )
 
 type fakeStore struct {

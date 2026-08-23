@@ -3,9 +3,9 @@ package memory_test
 import (
 	"testing"
 
-	"github.com/NitScm/nit/internal/store"
 	"github.com/NitScm/nit/internal/store/memory"
-	"github.com/NitScm/nit/internal/store/storetest"
+	"github.com/NitScm/nit/pkg/store"
+	"github.com/NitScm/nit/pkg/store/storetest"
 )
 
 func TestConformance(t *testing.T) {

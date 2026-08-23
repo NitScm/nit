@@ -25,8 +25,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/NitScm/nit/internal/store"
 	"github.com/NitScm/nit/pkg/protocol"
+	"github.com/NitScm/nit/pkg/store"
 )
 
 // version prefixes every token so the format can change without ambiguity.

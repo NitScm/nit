@@ -25,8 +25,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/NitScm/nit/internal/store"
 	"github.com/NitScm/nit/pkg/protocol"
+	"github.com/NitScm/nit/pkg/store"
 )
 
 // Options configures a queue.

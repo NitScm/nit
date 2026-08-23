@@ -8,9 +8,9 @@ import (
 
 	"github.com/NitScm/nit/internal/auth"
 	"github.com/NitScm/nit/internal/queue"
-	"github.com/NitScm/nit/internal/store"
 	"github.com/NitScm/nit/internal/taskspec"
 	"github.com/NitScm/nit/pkg/protocol"
+	"github.com/NitScm/nit/pkg/store"
 )
 
 // handlePull queues the production of a filtered diff.

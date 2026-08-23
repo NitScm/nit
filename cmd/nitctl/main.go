@@ -19,11 +19,11 @@ import (
 	"github.com/NitScm/nit/internal/bootstrap"
 	"github.com/NitScm/nit/internal/buildinfo"
 	"github.com/NitScm/nit/internal/policyloader"
-	"github.com/NitScm/nit/internal/store"
 	"github.com/NitScm/nit/internal/store/postgres"
 	"github.com/NitScm/nit/migrations"
 	"github.com/NitScm/nit/pkg/policy"
 	policyconfig "github.com/NitScm/nit/pkg/policy/config"
+	"github.com/NitScm/nit/pkg/store"
 )
 
 const usage = `nitctl - nit operator console

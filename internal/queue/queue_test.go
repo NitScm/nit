@@ -10,10 +10,10 @@ import (
 	"time"
 
 	"github.com/NitScm/nit/internal/queue"
-	"github.com/NitScm/nit/internal/store"
 	"github.com/NitScm/nit/internal/store/memory"
 	"github.com/NitScm/nit/pkg/policy"
 	"github.com/NitScm/nit/pkg/protocol"
+	"github.com/NitScm/nit/pkg/store"
 )
 
 // clock is a manually advanced time source, so lease behaviour is tested by

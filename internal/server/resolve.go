@@ -6,10 +6,10 @@ import (
 	"net/http"
 
 	"github.com/NitScm/nit/internal/auth"
-	"github.com/NitScm/nit/internal/store"
 	"github.com/NitScm/nit/internal/synctoken"
 	"github.com/NitScm/nit/pkg/policy"
 	"github.com/NitScm/nit/pkg/protocol"
+	"github.com/NitScm/nit/pkg/store"
 )
 
 // resolveRepository maps a policy repository id to its stored record.

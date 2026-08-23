@@ -20,8 +20,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/NitScm/nit/internal/store"
 	"github.com/NitScm/nit/pkg/policy"
+	"github.com/NitScm/nit/pkg/store"
 )
 
 // Store is an in-memory store.Store.

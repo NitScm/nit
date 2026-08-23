@@ -8,9 +8,9 @@ import (
 	"time"
 
 	"github.com/NitScm/nit/internal/auth"
-	"github.com/NitScm/nit/internal/store"
 	"github.com/NitScm/nit/pkg/policy"
 	"github.com/NitScm/nit/pkg/protocol"
+	"github.com/NitScm/nit/pkg/store"
 )
 
 // The operations API: what nitctl and the web console read.

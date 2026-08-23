@@ -9,9 +9,9 @@ import (
 
 	"github.com/NitScm/nit/internal/auth"
 	"github.com/NitScm/nit/internal/policyloader"
-	"github.com/NitScm/nit/internal/store"
 	"github.com/NitScm/nit/internal/store/memory"
 	"github.com/NitScm/nit/pkg/policy"
+	"github.com/NitScm/nit/pkg/store"
 )
 
 var now = time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC)

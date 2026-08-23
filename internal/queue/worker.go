@@ -6,8 +6,8 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/NitScm/nit/internal/store"
 	"github.com/NitScm/nit/pkg/protocol"
+	"github.com/NitScm/nit/pkg/store"
 )
 
 // Handler executes a claimed task and returns its marshalled result.

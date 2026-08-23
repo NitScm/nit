@@ -15,8 +15,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/NitScm/nit/internal/store"
 	"github.com/NitScm/nit/pkg/policy"
+	"github.com/NitScm/nit/pkg/store"
 )
 
 // ReconcilePolicy makes the database reflect the policy bundle.
