@@ -34,7 +34,7 @@ func (w *Worker) handlePull(ctx context.Context, task *store.Task) ([]byte, erro
 		return nil, err
 	}
 
-	repo, cleanup, err := w.clone(ctx, remote, spec.Branch)
+	repo, cleanup, err := w.checkout(ctx, spec.Remote, remote, spec.Branch)
 	if err != nil {
 		return nil, err
 	}

@@ -35,7 +35,7 @@ func (w *Worker) handlePush(ctx context.Context, task *store.Task) ([]byte, erro
 		return nil, err
 	}
 
-	repo, cleanup, err := w.clone(ctx, remote, spec.Branch)
+	repo, cleanup, err := w.checkout(ctx, spec.Remote, remote, spec.Branch)
 	if err != nil {
 		return nil, err
 	}
@@ -101,7 +101,10 @@ func (w *Worker) handlePush(ctx context.Context, task *store.Task) ([]byte, erro
 	// --force-with-lease is the real atomicity guarantee. The queue serializes
 	// nit's own work; only the forge can arbitrate against a change that did
 	// not come through nit at all.
-	if err := repo.Push(ctx, "origin", spec.Branch, gitx.PushOptions{
+	// The authenticated URL rather than "origin": a worktree cut from the mirror
+	// has no remote configured, because writing one would leave the credential
+	// on disk for as long as the mirror lives.
+	if err := repo.Push(ctx, remote, spec.Branch, gitx.PushOptions{
 		ExpectedRemoteCommit: tipBefore,
 	}); err != nil {
 		return nil, permanent(protocol.CodeConflict,

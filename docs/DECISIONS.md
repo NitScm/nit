@@ -631,3 +631,48 @@ that the escape hatch works.
 It is also the portable form. PostgreSQL rewrite rules have no equivalent in
 MySQL or MariaDB, while all three have triggers, so this removes an obstacle to
 a second backend rather than adding one.
+
+---
+
+## D32 — A shared mirror per repository, a private worktree per task
+
+**Decision.** `internal/gitcache` keeps a bare mirror per repository in
+`storage.work_dir`, fetches it before each task, and cuts a detached
+`git worktree` per task. Worktrees are never reused. Supersedes the
+clone-per-task of D11's era.
+
+**Why.** A task paid for a whole clone. On a large repository that dominated
+every other cost, and because pushes to one branch are serialized, the clone
+time *was* that branch's throughput — which is what put a big monorepo at a
+dozen pushes an hour, and made it the customer profile nit was worst at while
+being the one that needs it most.
+
+**Why it waited.** Sharing a clone between tasks that apply patches and rebase
+is also a way for one task's leftover state to corrupt another's, and the
+failure is not a broken build — it is a wrong commit on the forge under a
+developer's name. The trade was not worth taking before the apply path was
+settled.
+
+**Consequences**, each of which is a thing that can go wrong and is now a test:
+
+A worktree is never reused. A task that dies mid-apply leaves a dirty one, and
+removal is `--force` precisely because that is the case it exists for.
+
+A mirror that cannot be *opened* or cannot be *fetched* is rebuilt. Both fail on
+a corrupt mirror and the first is easy to miss: an interrupted pack write leaves
+`objects/` in a state where `git init --bare` itself refuses, so a rebuild that
+only triggered on a failed fetch would never run.
+
+No credential reaches the disk. A mirror is created empty and filled by a fetch
+whose URL is passed per call, and the push targets that URL rather than a
+configured remote. The clone this replaced also wrote the authenticated URL into
+a config — but deleted it seconds later, where a mirror would keep it for as
+long as the worker lives.
+
+Mirrors are locked per repository, not globally: git serializes ref updates per
+repository, so two tasks fetching one mirror race while two tasks on different
+mirrors do not.
+
+**A new deployment constraint.** A `work_dir` belongs to one worker process.
+The lock is in-process, so two processes sharing a directory would race on the
+same mirror. Recorded in `docs/SCALING.md` §3.

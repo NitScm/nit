@@ -57,24 +57,38 @@ makes a push atomic with respect to other nit pushes.
 
 ---
 
-## 3. Every task clones from scratch
+## 3. Every task used to clone from scratch
 
-`internal/worker` clones into `storage.work_dir` and removes the clone when the
-task ends. On a large repository this dominates every other cost in §2, and it
-is the single largest available win.
+**Fixed.** `internal/gitcache` keeps a bare mirror per repository, fetched
+before each use, and cuts a `git worktree` per task from it. A task pays for the
+delta rather than for a whole clone.
 
-It was left out deliberately: a clone shared between tasks that apply patches
-and rebase is also a way for one task's leftover state to corrupt another's, and
-that trade was not worth taking before the correctness of the apply path was
-settled. It now is.
+The numbers in §2 above predate it and are left as they were: they describe the
+cost this removed, and the cycle now falls to fetch-plus-checkout. What follows
+is the reasoning it was built against, kept because the risks did not go away —
+they moved.
 
-**The work.** A cache keyed by repository, `git fetch` instead of `git clone`,
-`git worktree` per task for isolation, and a hard reset between uses. Expect the
-cycle in §2 to fall to fetch-plus-checkout — often an order of magnitude on a
-large repository.
+It was left out for a long time on purpose: a clone shared between tasks that
+apply patches and rebase is also a way for one task's leftover state to corrupt
+another's, and the failure mode is not a broken build — it is a wrong commit on
+the forge under a developer's name.
 
-**Until then**, size `storage.work_dir` for largest repository × concurrency, and
-set `queue.lease_duration` to comfortably exceed a full clone.
+**What that bought.** A worktree is never reused; each task gets a fresh one and
+it is removed with `--force` afterwards, whatever state a failed task left. A
+mirror that cannot be opened *or* fetched is rebuilt rather than nursed, because
+a corrupt mirror poisons every later task for that repository. The credential is
+never written to disk: the mirror is created empty with `git init --bare` and
+filled by a fetch whose URL is passed per call, and the push goes to that URL
+rather than to a configured remote.
+
+**Sizing changes with it.** `storage.work_dir` now holds a persistent mirror per
+repository plus one worktree per concurrent task, rather than a full clone per
+task. Steady-state disk is closer to the sum of the repositories than to
+repository × concurrency, and it does not return to zero between tasks.
+
+**One deployment constraint is new**: a `work_dir` belongs to one worker
+process. The mirrors are locked per repository within a process; two processes
+sharing a directory would race on the same mirror.
 
 ---
 

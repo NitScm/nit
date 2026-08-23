@@ -24,6 +24,7 @@ import (
 
 	"github.com/NitScm/nit/internal/auditlog"
 	"github.com/NitScm/nit/internal/blob"
+	"github.com/NitScm/nit/internal/gitcache"
 	"github.com/NitScm/nit/internal/policyloader"
 	"github.com/NitScm/nit/internal/synctoken"
 	"github.com/NitScm/nit/pkg/audit"
@@ -99,6 +100,10 @@ type Worker struct {
 	cfg  Config
 	deps Deps
 
+	// cache hands out worktrees backed by a mirror per repository, so a task
+	// pays for the delta rather than for a whole clone.
+	cache *gitcache.Cache
+
 	// audit persists every decision and forwards it, and cannot fail a task
 	// while doing so.
 	audit *auditlog.Recorder
@@ -135,9 +140,15 @@ func New(cfg Config, deps Deps) (*Worker, error) {
 		return nil, fmt.Errorf("worker: create work dir: %w", err)
 	}
 
+	cache := gitcache.New(deps.Git, cfg.WorkDir, deps.Log)
+	if err := cache.Prepare(); err != nil {
+		return nil, err
+	}
+
 	return &Worker{
 		cfg:   cfg,
 		deps:  deps,
+		cache: cache,
 		audit: auditlog.New(deps.Store.Audit(), deps.AuditSink, deps.Log),
 	}, nil
 }
@@ -162,30 +173,24 @@ func (w *Worker) Handle(ctx context.Context, task *store.Task) ([]byte, error) {
 // next optimization — but a cache shared between tasks that apply patches and
 // rebase is also a way for one task's leftover state to corrupt another's, and
 // that trade is not worth taking before the correctness is settled.
-func (w *Worker) clone(ctx context.Context, remote, branch string) (gitx.Repo, func(), error) {
-	dir, err := os.MkdirTemp(w.cfg.WorkDir, "task-*")
+// checkout produces a working tree for a task.
+//
+// It goes through the mirror cache rather than cloning: identity is the
+// unauthenticated remote and names the mirror, remote carries the credential
+// and is used without being stored. The branch is resolved through the mirror,
+// so a task starts from what the last fetch saw rather than from a fresh
+// clone.
+func (w *Worker) checkout(ctx context.Context, identity, remote, branch string) (gitx.Repo, func(), error) {
+	repo, release, err := w.cache.Checkout(ctx, identity, remote, "refs/heads/"+branch)
 	if err != nil {
-		return nil, nil, err
+		// The remote may carry a token, and git quotes the URL it was given.
+		// Never surface the underlying message.
+		w.deps.Log.ErrorContext(ctx, "checkout failed", "branch", branch, "error", err)
+
+		return nil, nil, fmt.Errorf("checkout failed for branch %q", branch)
 	}
 
-	cleanup := func() {
-		if err := os.RemoveAll(dir); err != nil {
-			w.deps.Log.Warn("could not remove work directory", "dir", dir, "error", err)
-		}
-	}
-
-	// The clone directory must not exist for git; MkdirTemp created it.
-	target := filepath.Join(dir, "repo")
-
-	repo, err := w.deps.Git.Clone(ctx, remote, target, gitx.CloneOptions{Branch: branch})
-	if err != nil {
-		cleanup()
-
-		// The remote may carry a token. Never surface the underlying message.
-		return nil, nil, fmt.Errorf("clone failed for branch %q", branch)
-	}
-
-	return repo, cleanup, nil
+	return repo, release, nil
 }
 
 // authenticatedRemote resolves the URL git should use.

@@ -130,7 +130,39 @@ type Git interface {
 	// Open returns a Repo for an existing clone.
 	Open(ctx context.Context, dir string) (Repo, error)
 
+	// Mirror opens a bare repository at dir, creating it when absent.
+	//
+	// It is deliberately not a clone: a mirror is created empty and filled by
+	// Fetch, so the authenticated remote is passed per call and never written
+	// into the repository's config. A clone would leave a credential on disk
+	// for as long as the mirror lives, which for a cache is indefinitely.
+	Mirror(ctx context.Context, dir string) (Mirror, error)
+
 	// Version reports the git version in use, for diagnostics and for refusing
 	// to run against a build too old to support the flags nit relies on.
 	Version(ctx context.Context) (string, error)
+}
+
+// Mirror is a bare repository used as a local cache of a remote.
+//
+// It exists so that a task pays for the delta rather than for a whole clone.
+// The objects are shared; each task gets its own worktree, because two tasks on
+// two branches of one repository run concurrently and must not share a working
+// tree.
+type Mirror interface {
+	// Dir is the mirror's path on disk.
+	Dir() string
+
+	// Fetch updates the mirror from remote. The URL is passed rather than
+	// stored: it carries a credential.
+	Fetch(ctx context.Context, remote string, refspecs ...string) error
+
+	// AddWorktree checks commitish out into dir, detached, and returns a Repo
+	// for it. The directory must not exist.
+	AddWorktree(ctx context.Context, dir, commitish string) (Repo, error)
+
+	// RemoveWorktree deletes a worktree and forgets it, whatever state it was
+	// left in. A task that died mid-apply must not be able to leave anything
+	// behind for the next one to inherit.
+	RemoveWorktree(ctx context.Context, dir string) error
 }

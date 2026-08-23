@@ -377,3 +377,144 @@ func gitOut(t *testing.T, g *ExecGit, dir string, args ...string) string {
 
 	return strings.TrimSpace(string(out))
 }
+
+// A mirror must never hold the credential it was filled with.
+//
+// The ephemeral clone this replaces wrote the authenticated URL into config
+// and then deleted the whole directory seconds later. A mirror lives for as
+// long as the worker does, so a URL written into its config would be a token
+// sitting on disk indefinitely — which is why the mirror is created empty and
+// filled by Fetch rather than cloned.
+func TestMirrorStoresNoRemote(t *testing.T) {
+	g := requireGit(t)
+	ctx := context.Background()
+
+	source, _ := initRepo(t, g)
+
+	dir := filepath.Join(t.TempDir(), "mirror.git")
+
+	mirror, err := g.Mirror(ctx, dir)
+	if err != nil {
+		t.Fatalf("Mirror: %v", err)
+	}
+
+	// Stands in for an authenticated URL: if anything wrote the argument to
+	// disk, the marker would be findable.
+	remote := sourceDir(t, source)
+
+	if err := mirror.Fetch(ctx, remote); err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+
+	config, err := os.ReadFile(filepath.Join(dir, "config"))
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	if strings.Contains(string(config), remote) {
+		t.Errorf("the mirror config records the remote:\n%s", config)
+	}
+
+	out := gitOut(t, g, dir, "remote")
+	if out != "" {
+		t.Errorf("the mirror has remotes configured: %q", out)
+	}
+}
+
+// Two tasks on two branches of one repository run at the same time. They share
+// the objects and must not share a working tree.
+func TestWorktreesAreIndependent(t *testing.T) {
+	g := requireGit(t)
+	ctx := context.Background()
+
+	source, head := initRepo(t, g)
+
+	mirror, err := g.Mirror(ctx, filepath.Join(t.TempDir(), "mirror.git"))
+	if err != nil {
+		t.Fatalf("Mirror: %v", err)
+	}
+	if err := mirror.Fetch(ctx, sourceDir(t, source)); err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+
+	base := t.TempDir()
+	first := filepath.Join(base, "one")
+	second := filepath.Join(base, "two")
+
+	if _, err := mirror.AddWorktree(ctx, first, head); err != nil {
+		t.Fatalf("AddWorktree one: %v", err)
+	}
+	if _, err := mirror.AddWorktree(ctx, second, head); err != nil {
+		t.Fatalf("AddWorktree two: %v", err)
+	}
+
+	// Dirty the first. The second must not see it.
+	if err := os.WriteFile(filepath.Join(first, "scratch.txt"), []byte("in flight\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(second, "scratch.txt")); !os.IsNotExist(err) {
+		t.Errorf("the second worktree sees the first one's changes")
+	}
+}
+
+// A task that dies mid-apply leaves a dirty worktree. Removing it has to work
+// anyway, and has to leave nothing behind — otherwise the disk grows and, far
+// worse, the leftovers are there for something else to find.
+func TestRemoveWorktreeCleansUpAfterAFailedTask(t *testing.T) {
+	g := requireGit(t)
+	ctx := context.Background()
+
+	source, head := initRepo(t, g)
+
+	mirrorDir := filepath.Join(t.TempDir(), "mirror.git")
+
+	mirror, err := g.Mirror(ctx, mirrorDir)
+	if err != nil {
+		t.Fatalf("Mirror: %v", err)
+	}
+	if err := mirror.Fetch(ctx, sourceDir(t, source)); err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+
+	dir := filepath.Join(t.TempDir(), "wt")
+
+	if _, err := mirror.AddWorktree(ctx, dir, head); err != nil {
+		t.Fatalf("AddWorktree: %v", err)
+	}
+
+	// Uncommitted work, a stray file, and a staged change: what a killed task
+	// actually leaves.
+	if err := os.WriteFile(filepath.Join(dir, "half-applied.txt"), []byte("x\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if _, err := g.run(ctx, dir, "add", "--all"); err != nil {
+		t.Fatalf("add: %v", err)
+	}
+
+	if err := mirror.RemoveWorktree(ctx, dir); err != nil {
+		t.Fatalf("RemoveWorktree: %v", err)
+	}
+
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Errorf("the worktree directory survived removal")
+	}
+
+	// And git no longer believes it exists, so the next add at the same path
+	// does not fail on a stale registration.
+	if out := gitOut(t, g, mirrorDir, "worktree", "list"); strings.Contains(out, dir) {
+		t.Errorf("git still lists the removed worktree:\n%s", out)
+	}
+}
+
+// sourceDir returns the working directory of a Repo, for use as a local
+// "remote".
+func sourceDir(t *testing.T, repo Repo) string {
+	t.Helper()
+
+	r, ok := repo.(*execRepo)
+	if !ok {
+		t.Fatalf("unexpected Repo implementation %T", repo)
+	}
+
+	return r.dir
+}

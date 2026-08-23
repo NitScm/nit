@@ -320,3 +320,80 @@ var (
 	_ Git  = (*ExecGit)(nil)
 	_ Repo = (*execRepo)(nil)
 )
+
+// ---------------------------------------------------------------------------
+// mirrors
+// ---------------------------------------------------------------------------
+
+// Mirror opens a bare repository at dir, creating it when absent.
+func (g *ExecGit) Mirror(ctx context.Context, dir string) (Mirror, error) {
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		return nil, err
+	}
+
+	// `git init --bare` is idempotent on an existing repository, so this both
+	// creates and repairs. It is used instead of a clone so that no remote —
+	// and therefore no credential — is ever written into the config.
+	if _, err := g.run(ctx, dir, "init", "--bare", "--quiet"); err != nil {
+		return nil, fmt.Errorf("git init --bare %s: %w", dir, err)
+	}
+
+	return &execMirror{git: g, dir: dir}, nil
+}
+
+type execMirror struct {
+	git *ExecGit
+	dir string
+}
+
+func (m *execMirror) Dir() string { return m.dir }
+
+func (m *execMirror) Fetch(ctx context.Context, remote string, refspecs ...string) error {
+	if len(refspecs) == 0 {
+		refspecs = []string{"+refs/heads/*:refs/heads/*"}
+	}
+
+	args := append([]string{"fetch", "--prune", "--quiet", remote}, refspecs...)
+
+	if _, err := m.git.run(ctx, m.dir, args...); err != nil {
+		// The remote is a credential and git quotes the URL it was given, so
+		// the underlying message never reaches the caller.
+		return fmt.Errorf("fetch into mirror %s failed", m.dir)
+	}
+
+	return nil
+}
+
+func (m *execMirror) AddWorktree(ctx context.Context, dir, commitish string) (Repo, error) {
+	// --detach because a worktree that checked out a branch would hold that
+	// branch's ref, and the next task on the same branch could not check it
+	// out. Tasks work from a commit, never from a branch name.
+	if _, err := m.git.run(ctx, m.dir, "worktree", "add", "--detach", "--quiet", dir, commitish); err != nil {
+		return nil, fmt.Errorf("git worktree add %s: %w", dir, err)
+	}
+
+	return m.git.Open(ctx, dir)
+}
+
+func (m *execMirror) RemoveWorktree(ctx context.Context, dir string) error {
+	// --force because the point is to remove whatever a failed task left, and
+	// a worktree with uncommitted changes is exactly that case.
+	_, removeErr := m.git.run(ctx, m.dir, "worktree", "remove", "--force", dir)
+
+	// Remove the directory regardless: if git has already forgotten the
+	// worktree — a crash between operations — the files are still there, and
+	// leaving them would grow the disk without anything ever reclaiming them.
+	if err := os.RemoveAll(dir); err != nil {
+		return err
+	}
+
+	// Prune last, so an entry git still holds for a directory that no longer
+	// exists does not accumulate in the mirror's metadata.
+	if _, err := m.git.run(ctx, m.dir, "worktree", "prune"); err != nil && removeErr != nil {
+		return fmt.Errorf("worktree remove and prune both failed: %w", removeErr)
+	}
+
+	return nil
+}
+
+var _ Mirror = (*execMirror)(nil)
