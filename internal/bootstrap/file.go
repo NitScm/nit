@@ -96,7 +96,10 @@ type fileStorage struct {
 	BlobDir       string `yaml:"blob_dir"`
 	WorkDir       string `yaml:"work_dir"`
 	MaxPatchBytes int64  `yaml:"max_patch_bytes"`
-	PullTTL       string `yaml:"pull_ttl"`
+	// A pointer because zero is a meaningful value here — it disables
+	// eviction — and an int64 cannot tell that apart from an absent key.
+	MirrorBudgetBytes *int64 `yaml:"mirror_budget_bytes"`
+	PullTTL           string `yaml:"pull_ttl"`
 }
 
 type fileQueue struct {

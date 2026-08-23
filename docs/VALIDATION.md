@@ -235,25 +235,27 @@ nitctl config show
 ```
 file: /tmp/nit-validate/nit.yaml
 
-SETTING                    FROM         VALUE
-addr                       file         127.0.0.1:8080
-database.url               file         postgres://localhost/nit_validate
-forge.token                default      (not set)
-log.level                  default      INFO
-policy.dir                 file         /tmp/nit-validate/policy
-policy.reload              default      30s
-queue.lease_duration       default      1m0s
-queue.max_attempts         default      3
-queue.poll                 default      1s
-queue.reap_every           default      30s
-security.sync_key          file         (set)
-server.admin_groups        file         platform
-server.cors_origins        default      -
-server.event_max_wait      default      30s
-storage.blob_dir           file         /tmp/nit-validate/blobs
-storage.max_patch_bytes    default      104857600
-storage.pull_ttl           default      24h0m0s
-storage.work_dir           file         /tmp/nit-validate/work
+SETTING                     FROM         VALUE
+addr                        file         127.0.0.1:8080
+database.url                file         postgres://localhost/nit_validate
+forge.token                 default      (not set)
+git.ssh_command             default      -
+log.level                   default      INFO
+policy.dir                  file         /tmp/nit-validate/policy
+policy.reload               default      30s
+queue.lease_duration        default      1m0s
+queue.max_attempts          default      3
+queue.poll                  default      1s
+queue.reap_every            default      30s
+security.sync_key           file         (set)
+server.admin_groups         file         platform
+server.cors_origins         default      -
+server.event_max_wait       default      30s
+storage.blob_dir            file         /tmp/nit-validate/blobs
+storage.max_patch_bytes     default      104857600
+storage.mirror_budget_bytes default      21474836480
+storage.pull_ttl            default      24h0m0s
+storage.work_dir            file         /tmp/nit-validate/work
 ```
 
 The `FROM` column shows which layer supplied each value. Secrets are never
@@ -264,7 +266,7 @@ The environment still wins where you need it to:
 
 ```sh
 NIT_LEASE_DURATION=90s nitctl config show | grep lease
-# → queue.lease_duration       env          1m30s
+# → queue.lease_duration        env          1m30s
 ```
 
 Now the schema:

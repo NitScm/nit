@@ -38,8 +38,14 @@ import (
 
 // Config holds a worker's tunables.
 type Config struct {
-	// WorkDir is where clones live.
+	// WorkDir is where mirrors and task worktrees live.
 	WorkDir string
+
+	// MirrorBudgetBytes caps the disk the git mirrors may occupy. Mirrors
+	// persist between tasks, so unlike a per-task clone nothing returns the
+	// disk on its own; past the budget the least recently used ones are
+	// evicted. Zero disables eviction.
+	MirrorBudgetBytes int64
 
 	Tenant policy.TenantID
 
@@ -70,6 +76,9 @@ func (c *Config) applyDefaults() {
 	}
 	if c.PullArtifactTTL <= 0 {
 		c.PullArtifactTTL = 24 * time.Hour
+	}
+	if c.MirrorBudgetBytes < 0 {
+		c.MirrorBudgetBytes = 0
 	}
 	if c.MaxPatchBytes <= 0 {
 		c.MaxPatchBytes = 100 << 20
@@ -140,7 +149,7 @@ func New(cfg Config, deps Deps) (*Worker, error) {
 		return nil, fmt.Errorf("worker: create work dir: %w", err)
 	}
 
-	cache := gitcache.New(deps.Git, cfg.WorkDir, deps.Log)
+	cache := gitcache.New(deps.Git, cfg.WorkDir, cfg.MirrorBudgetBytes, deps.Log)
 	if err := cache.Prepare(); err != nil {
 		return nil, err
 	}

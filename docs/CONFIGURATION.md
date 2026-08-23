@@ -106,6 +106,7 @@ policy:
 storage:
   blob_dir: /var/lib/nit/blobs
   work_dir: /var/lib/nit/work
+  mirror_budget_bytes: 21474836480
   max_patch_bytes: 104857600
   pull_ttl: 24h
 
@@ -172,18 +173,18 @@ nitctl config show
 ```
 file: /etc/nit/nit.yaml
 
-SETTING                    FROM         VALUE
-addr                       file         127.0.0.1:8080
-database.url               file         postgres://postgres:***@localhost:5432/nit
-forge.token                file         (set)
-log.level                  file         INFO
-policy.reload              default      30s
-queue.lease_duration       file         5m0s
-queue.max_attempts         file         5
-queue.poll                 default      1s
-security.sync_key          file         (set)
-server.admin_groups        file         platform
-storage.pull_ttl           default      24h0m0s
+SETTING                     FROM         VALUE
+addr                        file         127.0.0.1:8080
+database.url                file         postgres://postgres:***@localhost:5432/nit
+forge.token                 file         (set)
+log.level                   file         INFO
+policy.reload               default      30s
+queue.lease_duration        file         5m0s
+queue.max_attempts          file         5
+queue.poll                  default      1s
+security.sync_key           file         (set)
+server.admin_groups         file         platform
+storage.pull_ttl            default      24h0m0s
 ```
 
 The `FROM` column answers "why is this setting what it is?" — the question an
@@ -258,7 +259,8 @@ like a database password.
 | File key | Variable | Default | What it is |
 | --- | --- | --- | --- |
 | `storage.blob_dir` | `NIT_BLOB_DIR` | `./var/blobs` | Where patch payloads are stored |
-| `storage.work_dir` | `NIT_WORK_DIR` | `./var/work` | Where workers clone (worker only) |
+| `storage.work_dir` | `NIT_WORK_DIR` | `./var/work` | Where a worker keeps its git mirrors and task worktrees (worker only) |
+| `storage.mirror_budget_bytes` | `NIT_MIRROR_BUDGET_BYTES` | `21474836480` (20 GiB) | Disk the mirrors may occupy before the least recently used are evicted; `0` disables eviction |
 
 **`NIT_BLOB_DIR` must be shared between `nitd` and every worker.** `nitd` writes
 the authorized patch there and the worker reads it back; two processes with two
@@ -267,8 +269,21 @@ means the same path; across hosts it means a shared volume, until the blob store
 grows an object-storage backend.
 
 `NIT_WORK_DIR` is scratch space, local to each worker, and does not need to be
-shared or backed up. Size it for the largest repository times the worker's
-concurrency: each runner holds one clone at a time.
+shared or backed up. **It belongs to one worker process**: mirrors are locked
+per repository within a process, and two workers pointed at one directory would
+race on the same mirror.
+
+It holds two things. A bare mirror per repository, kept between tasks so a task
+fetches a delta instead of cloning — and one worktree per concurrent task, which
+is removed when the task ends.
+
+Only the worktrees return their disk on their own, so size the volume as
+`NIT_MIRROR_BUDGET_BYTES` plus the largest repository times the worker's
+concurrency, with room to spare. When the mirrors exceed the budget the least
+recently used are removed until the rest fit; one whose worktree is still in use
+is never among them. Setting the budget below the size of a single large
+repository is worse than useless: that repository is evicted after every task
+and cloned again on the next.
 
 ### Behaviour
 

@@ -57,7 +57,7 @@ func configShow(path string) error {
 		fmt.Printf("file: none found (environment and defaults only)\n\n")
 	}
 
-	fmt.Printf("%-26s %-12s %s\n", "SETTING", "FROM", "VALUE")
+	fmt.Println(cfg.RedactedHeader())
 
 	for _, row := range cfg.Redacted() {
 		fmt.Println(row)

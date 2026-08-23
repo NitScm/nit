@@ -125,11 +125,12 @@ func run(args []string) error {
 	}
 
 	w, err := worker.New(worker.Config{
-		WorkDir:         cfg.WorkDir,
-		Tenant:          policy.DefaultTenant,
-		MaxPatchBytes:   cfg.MaxPatchBytes,
-		PullArtifactTTL: cfg.PullTTL,
-		Credentials:     forge.Credentials{Token: cfg.ForgeToken},
+		WorkDir:           cfg.WorkDir,
+		MirrorBudgetBytes: cfg.MirrorBudgetBytes,
+		Tenant:            policy.DefaultTenant,
+		MaxPatchBytes:     cfg.MaxPatchBytes,
+		PullArtifactTTL:   cfg.PullTTL,
+		Credentials:       forge.Credentials{Token: cfg.ForgeToken},
 	}, worker.Deps{
 		Store:      st,
 		Blobs:      blobs,

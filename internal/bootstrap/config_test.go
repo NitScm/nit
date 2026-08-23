@@ -31,7 +31,7 @@ func isolate(t *testing.T) string {
 		bootstrap.EnvQueuePoll, bootstrap.EnvReapEvery, bootstrap.EnvPullTTL,
 		bootstrap.EnvEventMaxWait, bootstrap.EnvPolicyReload, bootstrap.EnvMaxPatch,
 		bootstrap.EnvSyncKeyFile, bootstrap.EnvDatabaseURLFile, bootstrap.EnvForgeTokenFile,
-		bootstrap.EnvGitSSHCmd,
+		bootstrap.EnvGitSSHCmd, bootstrap.EnvMirrorBudget,
 	} {
 		t.Setenv(name, "")
 	}
@@ -527,5 +527,77 @@ git:
 	}
 	if !strings.Contains(line, command) {
 		t.Errorf("config show line = %q, want the command in full", line)
+	}
+}
+
+// Zero is how eviction is turned off, so it has to survive the load. An int64
+// field would read an explicit 0 as an absent key and silently restore the
+// default — leaving a deployment that asked for no eviction with 20 GiB of it.
+func TestZeroMirrorBudgetIsKept(t *testing.T) {
+	dir := isolate(t)
+
+	write(t, filepath.Join(dir, "nit.yaml"), `
+security:
+  sync_key: "`+key+`"
+storage:
+  mirror_budget_bytes: 0
+`, 0o600)
+
+	cfg, err := bootstrap.LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+
+	if cfg.MirrorBudgetBytes != 0 {
+		t.Errorf("MirrorBudgetBytes = %d, want the 0 the file asked for", cfg.MirrorBudgetBytes)
+	}
+	if cfg.Origin("storage.mirror_budget_bytes") != bootstrap.OriginFile {
+		t.Errorf("origin = %q, want file", cfg.Origin("storage.mirror_budget_bytes"))
+	}
+}
+
+func TestMirrorBudgetFromEnvironmentWins(t *testing.T) {
+	dir := isolate(t)
+
+	write(t, filepath.Join(dir, "nit.yaml"), `
+security:
+  sync_key: "`+key+`"
+storage:
+  mirror_budget_bytes: 1073741824
+`, 0o600)
+
+	t.Setenv(bootstrap.EnvMirrorBudget, "2147483648")
+
+	cfg, err := bootstrap.LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+
+	if cfg.MirrorBudgetBytes != 2147483648 {
+		t.Errorf("MirrorBudgetBytes = %d, want the environment's 2 GiB", cfg.MirrorBudgetBytes)
+	}
+}
+
+func TestNegativeMirrorBudgetIsRefused(t *testing.T) {
+	isolate(t)
+	t.Setenv(bootstrap.EnvSyncKey, key)
+	t.Setenv(bootstrap.EnvMirrorBudget, "-1")
+
+	if _, err := bootstrap.LoadConfig(); err == nil {
+		t.Fatal("a negative mirror budget was accepted")
+	}
+}
+
+func TestMirrorBudgetDefaults(t *testing.T) {
+	isolate(t)
+	t.Setenv(bootstrap.EnvSyncKey, key)
+
+	cfg, err := bootstrap.LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+
+	if cfg.MirrorBudgetBytes != 20<<30 {
+		t.Errorf("MirrorBudgetBytes = %d, want 20 GiB", cfg.MirrorBudgetBytes)
 	}
 }

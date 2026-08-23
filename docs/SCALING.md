@@ -86,6 +86,24 @@ repository plus one worktree per concurrent task, rather than a full clone per
 task. Steady-state disk is closer to the sum of the repositories than to
 repository × concurrency, and it does not return to zero between tasks.
 
+**Which is why mirrors are evicted.** A clone returned its disk when the task
+ended; a mirror does not, including the mirror of a repository pushed to once a
+year. `storage.mirror_budget_bytes` (default 20 GiB) caps what the mirrors may
+occupy. Past it, the least recently used ones are removed until the rest fit —
+ordered by a marker file nit writes on each use, not by directory timestamps,
+which say when git last happened to write rather than when nit last needed the
+repository.
+
+A mirror with a live worktree is never a candidate, whichever process owns that
+worktree: the sweep reads git's own `worktrees/` metadata, not just its own
+bookkeeping. Eviction costs one slow task when the repository comes back; a full
+disk fails every task on every repository and needs a human.
+
+The sweep runs after a task releases its worktree, at most once a minute — it
+walks the mirrors to measure them, and doing that after every task on a large
+repository would cost more than it saves. Set the budget to `0` to disable
+eviction, which is only sensible when something else watches the volume.
+
 **One deployment constraint is new**: a `work_dir` belongs to one worker
 process. The mirrors are locked per repository within a process; two processes
 sharing a directory would race on the same mirror.
@@ -283,7 +301,8 @@ deserve tests written before the change, not after.
 | | |
 | --- | --- |
 | `queue.lease_duration` | Must exceed a full clone of your largest repository. Too short and tasks retry forever; too long and a crashed worker blocks its branch for that long. |
-| `storage.work_dir` | Largest repository × worker concurrency, with room to spare. |
+| `storage.work_dir` | The mirrors (bounded by `storage.mirror_budget_bytes`) plus one worktree per concurrent task. Give the volume room above the budget: the budget covers mirrors only. |
+| `storage.mirror_budget_bytes` | The repositories worth keeping warm, summed. Below the size of one large repository it degenerates into cloning on every task. |
 | `storage.blob_dir` | In-flight patches only, but shared by `nitd` and every worker. |
 | Worker concurrency | Each runner holds one clone. Predict disk from concurrency, not from throughput. |
 | `queue.poll` | Raising it lowers the §5 lock rate at the cost of latency on an idle queue. |

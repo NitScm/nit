@@ -676,3 +676,48 @@ mirrors do not.
 **A new deployment constraint.** A `work_dir` belongs to one worker process.
 The lock is in-process, so two processes sharing a directory would race on the
 same mirror. Recorded in `docs/SCALING.md` §3.
+
+---
+
+## D33 — Mirrors are evicted on a disk budget, never while in use
+
+**Decision.** `storage.mirror_budget_bytes` (default 20 GiB) caps what the
+mirrors of D32 may occupy. Past it, `internal/gitcache` removes the least
+recently used mirrors until the rest fit. A mirror with a live worktree is never
+a candidate. Zero disables eviction.
+
+**Why.** D32 traded a cost that was paid and released for one that is paid and
+kept. A clone returned its disk when its task ended; a mirror does not, and a
+worker that has seen enough repositories fills its volume — including with
+mirrors of repositories nobody has pushed to in a year. Eviction costs one slow
+task when a repository comes back. A full disk fails every task, on every
+repository, and needs a human.
+
+**Ordered by a marker file**, not by directory timestamps. Git rewrites parts of
+a repository during a fetch and leaves others untouched for months, so a
+directory's mtime records when git last happened to write rather than when nit
+last needed the repository. A mirror with no marker — one left by a version
+before this — sorts oldest, so it goes first rather than last.
+
+**In use is decided twice.** An in-process counter covers this worker, including
+the window between creating a task directory and git registering a worktree in
+it. Git's own `worktrees/` metadata covers every other process: D32 said a
+`work_dir` belongs to one worker, and a second worker that ignored the rule
+would otherwise delete the objects the first is reading. Config is a place
+people make mistakes; this one would have corrupted a running task rather than
+failing it.
+
+The cost of that choice: a task killed hard leaves both its worktree entry and
+its directory, and pins one mirror until an operator clears the work directory.
+That is the safe direction — the alternative is evicting a repository out from
+under a task that is merely slow.
+
+**Swept after a task releases its worktree, at most once a minute.** Measuring
+the mirrors means walking them, and doing that after every task on a large
+repository would cost more than eviction saves. Nothing runs on a timer, so
+there is no background goroutine to own, shut down, or leak.
+
+**What this is not.** It is not the answer to a volume too small for the
+repositories in play. A budget below the size of one large repository evicts it
+after every task and clones it again on the next; the setting bounds a working
+set, it does not conjure disk.

@@ -2,12 +2,16 @@ package gitcache_test
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/NitScm/nit/internal/gitcache"
 	"github.com/NitScm/nit/pkg/gitx"
@@ -22,7 +26,7 @@ func newCache(t *testing.T) (*gitcache.Cache, string) {
 
 	dir := t.TempDir()
 
-	c := gitcache.New(gitx.NewExecGit(), dir, nil)
+	c := gitcache.New(gitx.NewExecGit(), dir, 0, nil)
 	if err := c.Prepare(); err != nil {
 		t.Fatalf("Prepare: %v", err)
 	}
@@ -254,4 +258,200 @@ func repoDir(t *testing.T, repo gitx.Repo) string {
 	t.Helper()
 
 	return repo.Dir()
+}
+
+// budgeted returns a cache over an existing work directory with a disk budget,
+// so a test can build mirrors first and decide what fits afterwards.
+func budgeted(t *testing.T, workDir string, budget int64) *gitcache.Cache {
+	t.Helper()
+
+	c := gitcache.New(gitx.NewExecGit(), workDir, budget, nil)
+	if err := c.Prepare(); err != nil {
+		t.Fatalf("Prepare: %v", err)
+	}
+
+	return c
+}
+
+// mirrorPaths returns the mirror directories currently on disk.
+func mirrorPaths(t *testing.T, workDir string) []string {
+	t.Helper()
+
+	entries, err := os.ReadDir(filepath.Join(workDir, "mirrors"))
+	if err != nil {
+		t.Fatalf("read mirrors: %v", err)
+	}
+
+	var out []string
+	for _, e := range entries {
+		out = append(out, filepath.Join(workDir, "mirrors", e.Name()))
+	}
+
+	sort.Strings(out)
+
+	return out
+}
+
+// A mirror persists between tasks, so nothing returns its disk on its own.
+// Past the budget the least recently used one goes.
+func TestTheLeastRecentlyUsedMirrorIsEvicted(t *testing.T) {
+	c, workDir := newCache(t)
+	ctx := context.Background()
+
+	old, oldHead := upstream(t)
+	recent, recentHead := upstream(t)
+
+	for _, r := range []struct {
+		source string
+		head   string
+	}{{old, oldHead}, {recent, recentHead}} {
+		_, release, err := c.Checkout(ctx, r.source, r.source, r.head)
+		if err != nil {
+			t.Fatalf("checkout %s: %v", r.source, err)
+		}
+		release()
+	}
+
+	paths := mirrorPaths(t, workDir)
+	if len(paths) != 2 {
+		t.Fatalf("%d mirrors on disk, want 2", len(paths))
+	}
+
+	// Ages set explicitly rather than relying on the order of two checkouts a
+	// microsecond apart, which a coarse filesystem clock can report as equal.
+	oldest := ageMirror(t, workDir, old, -48*time.Hour)
+	newest := ageMirror(t, workDir, recent, -time.Hour)
+
+	// A budget one byte under what the two occupy: exactly one has to go.
+	budget := dirBytes(t, paths[0]) + dirBytes(t, paths[1]) - 1
+
+	budgeted(t, workDir, budget).Sweep(ctx)
+
+	if _, err := os.Stat(oldest); !os.IsNotExist(err) {
+		t.Errorf("the least recently used mirror survived the sweep (%v)", err)
+	}
+	if _, err := os.Stat(newest); err != nil {
+		t.Errorf("the most recently used mirror was evicted: %v", err)
+	}
+}
+
+// Evicting a mirror whose worktree is live would delete the objects a running
+// task is reading. The disk it would free is about to be freed anyway.
+func TestAMirrorInUseIsNeverEvicted(t *testing.T) {
+	c, workDir := newCache(t)
+	ctx := context.Background()
+
+	source, head := upstream(t)
+
+	repo, release, err := c.Checkout(ctx, source, source, head)
+	if err != nil {
+		t.Fatalf("checkout: %v", err)
+	}
+	defer release()
+
+	// A budget nothing can satisfy: without the in-use rule this mirror goes.
+	budgeted(t, workDir, 1).Sweep(ctx)
+
+	// The cache under test is the one holding the worktree, so sweep on it too.
+	c.Sweep(ctx)
+
+	if got, err := repo.ResolveRef(ctx, "HEAD"); err != nil || got != head {
+		t.Errorf("the worktree of a running task stopped working after a sweep: %s, %v", got, err)
+	}
+}
+
+// A budget of zero is the documented way to turn eviction off.
+func TestZeroBudgetEvictsNothing(t *testing.T) {
+	c, workDir := newCache(t)
+	ctx := context.Background()
+
+	source, head := upstream(t)
+
+	_, release, err := c.Checkout(ctx, source, source, head)
+	if err != nil {
+		t.Fatalf("checkout: %v", err)
+	}
+	release()
+
+	c.Sweep(ctx)
+
+	if got := len(mirrorPaths(t, workDir)); got != 1 {
+		t.Errorf("%d mirrors after a sweep with no budget, want the one that was there", got)
+	}
+}
+
+// An evicted repository is slow on its next task, not broken.
+func TestAnEvictedRepositoryIsRebuiltOnItsNextCheckout(t *testing.T) {
+	c, workDir := newCache(t)
+	ctx := context.Background()
+
+	source, head := upstream(t)
+
+	_, release, err := c.Checkout(ctx, source, source, head)
+	if err != nil {
+		t.Fatalf("first checkout: %v", err)
+	}
+	release()
+
+	budgeted(t, workDir, 1).Sweep(ctx)
+
+	if got := len(mirrorPaths(t, workDir)); got != 0 {
+		t.Fatalf("%d mirrors after a sweep that should have emptied the cache", got)
+	}
+
+	repo, release, err := c.Checkout(ctx, source, source, head)
+	if err != nil {
+		t.Fatalf("checkout after eviction: %v", err)
+	}
+	defer release()
+
+	if got, err := repo.ResolveRef(ctx, "HEAD"); err != nil || got != head {
+		t.Errorf("HEAD = %s (%v), want %s", got, err, head)
+	}
+}
+
+// ageMirror backdates a mirror's last-used marker and returns its directory.
+func ageMirror(t *testing.T, workDir, identity string, age time.Duration) string {
+	t.Helper()
+
+	sum := sha256.Sum256([]byte(identity))
+	dir := filepath.Join(workDir, "mirrors", hex.EncodeToString(sum[:8])+".git")
+
+	marker := filepath.Join(dir, "nit-last-used")
+	when := time.Now().Add(age)
+
+	if err := os.Chtimes(marker, when, when); err != nil {
+		t.Fatalf("backdate %s: %v", marker, err)
+	}
+
+	return dir
+}
+
+func dirBytes(t *testing.T, dir string) int64 {
+	t.Helper()
+
+	var total int64
+
+	err := filepath.WalkDir(dir, func(_ string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+
+		total += info.Size()
+
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("size of %s: %v", dir, err)
+	}
+
+	return total
 }

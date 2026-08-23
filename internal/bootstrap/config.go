@@ -17,18 +17,19 @@ import (
 // Environment variable names. They are constants so a typo is a compile error
 // in one place rather than a silently missing setting in three.
 const (
-	EnvAddr        = "NIT_ADDR"
-	EnvDatabaseURL = "NIT_DATABASE_URL"
-	EnvPolicyDir   = "NIT_POLICY_DIR"
-	EnvBlobDir     = "NIT_BLOB_DIR"
-	EnvSyncKey     = "NIT_SYNC_KEY"
-	EnvWorkDir     = "NIT_WORK_DIR"
-	EnvMaxPatch    = "NIT_MAX_PATCH_BYTES"
-	EnvLogLevel    = "NIT_LOG_LEVEL"
-	EnvAdminGroups = "NIT_ADMIN_GROUPS"
-	EnvCORSOrigins = "NIT_CORS_ORIGINS"
-	EnvForgeToken  = "NIT_FORGE_TOKEN"
-	EnvGitSSHCmd   = "NIT_GIT_SSH_COMMAND"
+	EnvAddr         = "NIT_ADDR"
+	EnvDatabaseURL  = "NIT_DATABASE_URL"
+	EnvPolicyDir    = "NIT_POLICY_DIR"
+	EnvBlobDir      = "NIT_BLOB_DIR"
+	EnvSyncKey      = "NIT_SYNC_KEY"
+	EnvWorkDir      = "NIT_WORK_DIR"
+	EnvMaxPatch     = "NIT_MAX_PATCH_BYTES"
+	EnvMirrorBudget = "NIT_MIRROR_BUDGET_BYTES"
+	EnvLogLevel     = "NIT_LOG_LEVEL"
+	EnvAdminGroups  = "NIT_ADMIN_GROUPS"
+	EnvCORSOrigins  = "NIT_CORS_ORIGINS"
+	EnvForgeToken   = "NIT_FORGE_TOKEN"
+	EnvGitSSHCmd    = "NIT_GIT_SSH_COMMAND"
 
 	// The `_FILE` forms exist because that is how a container runtime delivers
 	// a secret: Docker secrets, Kubernetes secrets and systemd's LoadCredential
@@ -91,7 +92,23 @@ type Config struct {
 	GitSSHCommand string
 
 	MaxPatchBytes int64
-	LogLevel      slog.Level
+
+	// MirrorBudgetBytes caps the disk a worker's repository mirrors may use.
+	//
+	// Mirrors persist between tasks — that is the point — so unlike the clones
+	// they replaced they never return the disk. Without a ceiling a worker that
+	// has seen enough repositories fills its volume, including with mirrors of
+	// repositories nobody has pushed to in a year.
+	//
+	// Exceeding it evicts the least recently used mirrors. That costs one slow
+	// task when a repository comes back, which is the right price: the
+	// alternative is a full disk, and a full disk fails every task at once.
+	//
+	// Zero disables eviction, for a deployment where something else watches the
+	// volume. It is a deliberate setting, not the default.
+	MirrorBudgetBytes int64
+
+	LogLevel slog.Level
 
 	// AdminGroups may read the operations API. Named here rather than in the
 	// policy bundle so that a bad bundle cannot lock an operator out of the
@@ -187,12 +204,13 @@ func LoadConfigFrom(explicitPath string) (Config, error) {
 
 func defaults() Config {
 	return Config{
-		Addr:          ":8080",
-		PolicyDir:     "./configs/policy/example",
-		BlobDir:       "./var/blobs",
-		WorkDir:       "./var/work",
-		MaxPatchBytes: 100 << 20,
-		LogLevel:      slog.LevelInfo,
+		Addr:              ":8080",
+		PolicyDir:         "./configs/policy/example",
+		BlobDir:           "./var/blobs",
+		WorkDir:           "./var/work",
+		MaxPatchBytes:     100 << 20,
+		MirrorBudgetBytes: 20 << 30,
+		LogLevel:          slog.LevelInfo,
 
 		LeaseDuration: 60 * time.Second,
 		MaxAttempts:   3,
@@ -236,6 +254,10 @@ func (c *Config) applyFile(f *File) error {
 	if f.Storage.MaxPatchBytes > 0 {
 		c.MaxPatchBytes = f.Storage.MaxPatchBytes
 		c.mark("storage.max_patch_bytes", OriginFile)
+	}
+	if f.Storage.MirrorBudgetBytes != nil {
+		c.MirrorBudgetBytes = *f.Storage.MirrorBudgetBytes
+		c.mark("storage.mirror_budget_bytes", OriginFile)
 	}
 	if f.Queue.MaxAttempts > 0 {
 		c.MaxAttempts = f.Queue.MaxAttempts
@@ -416,6 +438,14 @@ func (c *Config) applyEnv() error {
 		c.MaxPatchBytes = parsed
 		c.mark("storage.max_patch_bytes", OriginEnv)
 	}
+	if raw := os.Getenv(EnvMirrorBudget); raw != "" {
+		parsed, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || parsed < 0 {
+			return fmt.Errorf("%s: must be a number of bytes, or 0 to disable eviction", EnvMirrorBudget)
+		}
+		c.MirrorBudgetBytes = parsed
+		c.mark("storage.mirror_budget_bytes", OriginEnv)
+	}
 	if raw := os.Getenv(EnvMaxAttempts); raw != "" {
 		parsed, err := strconv.Atoi(raw)
 		if err != nil || parsed <= 0 {
@@ -480,6 +510,32 @@ func (c Config) Origin(name string) Origin {
 	return OriginDefault
 }
 
+// minSettingWidth is the floor for the SETTING column. RedactedHeader and
+// Redacted derive the real width the same way, so a caller cannot print a
+// header its rows do not line up under.
+const minSettingWidth = 26
+
+// RedactedHeader is the header line the rows of Redacted align under.
+func (c Config) RedactedHeader() string {
+	return fmt.Sprintf("%-*s %-12s %s", c.settingWidth(), "SETTING", "FROM", "VALUE")
+}
+
+// settingWidth measures the SETTING column rather than fixing it: a name longer
+// than a hard-coded width pushes the rest of its line out of alignment, and the
+// table stops being readable exactly when someone is reading it to find a
+// misconfiguration.
+func (c Config) settingWidth() int {
+	width := minSettingWidth
+
+	for _, row := range c.redactedRows() {
+		if len(row[0]) > width {
+			width = len(row[0])
+		}
+	}
+
+	return width
+}
+
 // Redacted renders the effective configuration for `nitctl config show`.
 //
 // Secrets are never printed, only whether they are set and where they came
@@ -487,7 +543,26 @@ func (c Config) Origin(name string) Origin {
 // and which layer supplied it; nobody needs it echoed to a terminal that
 // scrolls into a support ticket.
 func (c Config) Redacted() []string {
-	rows := [][2]string{
+	rows := c.redactedRows()
+	width := c.settingWidth()
+
+	out := make([]string, 0, len(rows))
+	for _, row := range rows {
+		value := row[1]
+		if value == "" {
+			value = "-"
+		}
+
+		out = append(out, fmt.Sprintf("%-*s %-12s %s", width, row[0], c.Origin(row[0]), value))
+	}
+
+	sort.Strings(out)
+
+	return out
+}
+
+func (c Config) redactedRows() [][2]string {
+	return [][2]string{
 		{"addr", c.Addr},
 		{"database.url", redactURL(c.DatabaseURL)},
 		{"policy.dir", c.PolicyDir},
@@ -495,6 +570,7 @@ func (c Config) Redacted() []string {
 		{"storage.blob_dir", c.BlobDir},
 		{"storage.work_dir", c.WorkDir},
 		{"storage.max_patch_bytes", strconv.FormatInt(c.MaxPatchBytes, 10)},
+		{"storage.mirror_budget_bytes", strconv.FormatInt(c.MirrorBudgetBytes, 10)},
 		{"storage.pull_ttl", c.PullTTL.String()},
 		{"queue.lease_duration", c.LeaseDuration.String()},
 		{"queue.max_attempts", strconv.Itoa(c.MaxAttempts)},
@@ -513,20 +589,6 @@ func (c Config) Redacted() []string {
 
 		{"log.level", c.LogLevel.String()},
 	}
-
-	out := make([]string, 0, len(rows))
-	for _, row := range rows {
-		value := row[1]
-		if value == "" {
-			value = "-"
-		}
-
-		out = append(out, fmt.Sprintf("%-26s %-12s %s", row[0], c.Origin(row[0]), value))
-	}
-
-	sort.Strings(out)
-
-	return out
 }
 
 func present(set bool) string {

@@ -20,8 +20,14 @@ storage:
   # it back; two separate directories produce missing_patch on every push.
   blob_dir: /var/lib/nit/blobs
 
-  # Scratch. Size it for the largest repository times the concurrency.
+  # Belongs to this worker alone. Holds a bare mirror per repository, kept
+  # between tasks, plus one worktree per concurrent task.
   work_dir: /var/lib/nit/work
+
+  # Only the worktrees free their disk on their own. Past this the least
+  # recently used mirrors are evicted; one in use is never among them. Size the
+  # volume above it: 20 GiB of mirrors plus the worktrees in flight.
+  mirror_budget_bytes: 21474836480
 
 security:
   sync_key_file: /run/secrets/nit-sync-key
