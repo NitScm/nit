@@ -1,125 +1,98 @@
 # Extension points
 
-How something is plugged into nit without being part of it.
-
-This exists because nit has a commercial edition built *around* this
-repository, and the line between the two has to be legible to a contributor
-who has never heard of it. The short version:
-
-> **Open: the decision. Closed: the administration of what feeds it.**
-
-`pkg/policy`, `pkg/enforce` and `pkg/patch` decide who may read and write which
-files. They stay open, because that is precisely what an adopter of an
-authorization layer needs to audit. What plugs in is everything that *fills*
-their inputs — a directory, an approval workflow, an export, a different
-database.
-
-## The rule that has no exception
-
-**No commercial code in this repository.** Not in an `ee/` directory, not
-behind a build tag, not in a file that says "licensed differently".
-
-The reason is not purity. It is that a contributor must be able to know the
-licence of what they are writing from the fact that they are writing it here,
-without checking which folder they are in. Projects that blur this spend the
-next several years untangling it.
-
-The commercial edition is a separate, private Go module that imports this one
-and registers its own implementations of the interfaces below. It is the same
-server with more things registered — not a fork, and not a patch set.
-
-## Why the seams are here at all
-
-Each one is useful without the commercial edition:
-
-| Seam | A community use |
-| --- | --- |
-| `Authenticator` | mTLS, or a token in a hardware token |
-| `policy.Source` | a bundle from S3, or generated from another system |
-| `audit.Sink` | mirror the trail to a file, or to a message queue |
-| `store.Store` | a backend this project does not ship |
-| Grant overlay | a script that grants an hour of access and revokes it |
-
-A seam that only serves the paid edition is a crippled product wearing an
-interface. If one of these stops being useful on its own, it is in the wrong
-place.
+Some of nit's behaviour is behind an interface so it can be replaced without
+forking. This says which, what each one is for, and what is deliberately not
+one.
 
 ## The seams
 
-### `Authenticator` — who is this
+### `policy.Source` — where the bundle comes from
 
-The community implementation resolves a bearer token against its SHA-256 in
-`sessions`. An implementation can instead resolve an OIDC or SAML assertion, a
-client certificate, or anything else, as long as it returns a principal the
-policy bundle declares.
+Returns the compiled bundle in force. The directory-watching loader is one
+implementation; `policy.Static` is another, for a bundle decided once at
+start-up.
 
-What it must not do is decide *what* that principal may do. That is the
-engine's job and it stays in one place.
+The interface lives in `pkg/policy` rather than beside the loader because a
+directory is *one way* to obtain a bundle, not the definition of one. An
+implementation can read from object storage, generate rules from another
+system, or compose: read the rules from files and resolve group membership
+against a company directory, so `subject: {type: group, id: platform}` means
+what that company already means by it. The rules stay in files; only the
+membership comes from elsewhere.
 
-### `policy.Source` — where the rules come from
-
-Already an interface: something that returns the compiled bundle in force. The
-directory-watching loader is one implementation.
-
-An implementation may compose: read the bundle from disk *and* merge group
-membership from a directory, so that `subject: {type: group, id: platform}`
-resolves against the company's real groups rather than a list checked into
-git. The rules stay in files; only the membership comes from elsewhere.
+`Current` is called on the request path, so it must be cheap and must not
+block. Implementations that fetch from elsewhere refresh in the background and
+serve the last good bundle meanwhile — which is what the directory loader
+does, and why a bundle that fails to compile never changes anything.
 
 ### `audit.Sink` — where the record goes
 
-Today every decision is appended to `audit_log`. A sink lets that fan out —
-to a SIEM, to object storage, to a file.
+Every decision is appended to `audit_log`. A sink lets that fan out as well —
+to a file, a message queue, an object store.
 
-Two properties a sink must preserve: a failure to write **must not** fail the
-operation being recorded (audit is best-effort at request time, deliberately),
-and it must never be the *only* copy. The database write stays.
+Two properties an implementation must preserve:
+
+- **A failed write must not fail the operation being recorded.** Audit is
+  best-effort at request time on purpose: refusing an authorized push because a
+  log write failed would be its own kind of outage. An error is logged loudly;
+  the operation continues.
+- **A sink is never the only copy.** The database write stays. An export that
+  silently became the sole record would put the audit trail behind somebody
+  else's availability.
+
+`audit.Multi` fans out to several sinks and attempts every one even after a
+failure, joining the errors. Stopping at the first would make the order of
+configuration decide which destinations receive a record.
 
 ### `store.Store` — where the state lives
 
-Already an interface, and — more usefully — `storetest` is a conformance suite
-that runs the same tests against any implementation. A backend is therefore
-provable rather than hopeful; three real bugs in the PostgreSQL store were
-found by running that suite against a live database rather than a mock.
+The queue, sync points, sessions and the audit trail. Two implementations ship:
+in-memory and PostgreSQL.
 
-Anyone writing a backend runs the suite. If it passes, the queue's exclusion,
-fencing and idempotency guarantees hold.
+What makes this one worth writing against is `internal/store/storetest`: a
+conformance suite that runs the *same* tests against any implementation —
+partition exclusion, fencing, lease expiry, idempotency, concurrent claims. A
+backend is therefore provable rather than hopeful. Three real bugs in the
+PostgreSQL store were found by running that suite against a live database
+rather than a mock.
 
-### Grant overlay — temporary access
-
-The engine gains a notion of a **grant**: a subject, a path set, an action set,
-and an expiry. Evaluation considers grants alongside rules, and a grant that
-has expired is simply not there.
-
-The mechanism is open and scriptable. What is not in this repository is the
-workflow around it — who may request one, who approves, what evidence is
-attached. That is administration.
-
-**A grant is not a rule.** Rules live in files, in git, reviewed like code, and
-that does not change. A grant is a time-bound record that a rule already
-authorises somebody to create.
+If you write a backend, run the suite. If it passes, the queue's guarantees
+hold.
 
 ## What is deliberately not a seam
 
 **Enforcement.** `pkg/enforce` decides what a push may land and what a pull may
-carry. There is one decision point and it is here. An implementation that could
-replace it could disagree with it, and then the audit trail records a decision
-that is not the one that was applied.
+carry. There is one decision point and it is here. Something that could replace
+it could disagree with it, and then the audit trail records a decision that is
+not the one that was applied.
+
+**Anything inside evaluation.** A hook or callback that runs during `Evaluate`
+would end its guarantee of being total, order-independent and attributable
+(D9). A rule set whose meaning depends on what code was registered cannot be
+reviewed.
 
 **The wire protocol.** Clients are a contract. It changes with a version number
 and a plain sentence about what breaks, not with a plugin.
 
 **Fail-closed pushes, per-branch serialization, one squashed commit per push.**
-These are the product. They are recorded with their reasoning in
-[`DECISIONS.md`](DECISIONS.md) — D1, D11, D4.
+These are the product, and their reasoning is in [`DECISIONS.md`](DECISIONS.md)
+— D1, D11, D4.
 
-## Adding a seam
+## Proposing a new seam
 
-Open an issue first. A seam is a public interface, which is to say a promise,
-and the bar is the table above: it has to be useful to somebody who is not
-paying.
+Open an issue first. A public interface is a promise, and the bar is that it
+has to be useful to somebody with no unusual requirements — the three above
+each are.
 
-Anything that reaches the decision — a hook that could change an outcome, a
-callback inside evaluation — is not a seam and will be declined. `Evaluate`
-stays total, order-independent and attributable (D9), and it cannot be any of
-those if arbitrary code runs inside it.
+## On the commercial edition
+
+There is one, and it is built *around* this repository rather than into it: a
+separate module that imports this one. **No commercially licensed code lands
+here** — not in an `ee/` directory, not behind a build tag, not in a file that
+says "licensed differently".
+
+The reason is not purity. It is that you should be able to know the licence of
+what you are writing from the fact that you are writing it here, without
+checking which folder you are in. Everything in this repository is Apache 2.0,
+including every seam above, and an implementation you contribute stays that
+way.
