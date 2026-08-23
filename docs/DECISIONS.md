@@ -721,3 +721,67 @@ there is no background goroutine to own, shut down, or leak.
 repositories in play. A budget below the size of one large repository evicts it
 after every task and clones it again on the next; the setting bounds a working
 set, it does not conjure disk.
+
+---
+
+## D34 — MySQL and MariaDB as a second backend, in the community edition
+
+**Decision.** `internal/store/mysql` implements the store on MySQL 8.0.16+ and
+MariaDB 10.6+, with its own migration set under `migrations/mysql/`. PostgreSQL
+remains the recommended backend. The DSN selects the engine; nothing names it.
+
+**Why at all.** "Which database do you support?" is an adoption question before
+it is a technical one. A team already running MariaDB will not stand up
+PostgreSQL to evaluate a tool, and the evaluation is where nit either gets
+adopted or does not.
+
+**Why community and not commercial.** It was briefly the other way. The
+argument that changed it: a backend restriction is not a feature, it is an
+obstacle placed in the way of trying the product. Nothing about running on
+MariaDB costs more to support than running on PostgreSQL, so charging for it
+would be charging for the absence of a limitation.
+
+**What makes a second backend safe to offer.** `pkg/store/storetest`, and only
+that. The queue semantics — partition exclusion, lease expiry, fencing tokens,
+idempotent submission — are subtle enough that a prose description is not a
+specification. One suite runs against all three implementations in CI. Without
+it this decision would be irresponsible rather than merely expensive.
+
+**Four things the schema could not carry across**, each recorded where it
+occurs rather than smoothed over:
+
+*Migrations are not transactional.* MySQL and MariaDB commit implicitly at each
+DDL statement. A migration that fails halfway leaves the statements before it
+applied and no record of the version. The migrator therefore executes one
+statement at a time so the error names which — and `docs/CONFIGURATION.md` tells
+an operator to back up before migrating this backend, which it does not say for
+the other.
+
+*TRUNCATE cannot be intercepted.* D31 gave `audit_log` a trigger that raises,
+and PostgreSQL has a statement-level `BEFORE TRUNCATE` to cover the one word
+that would otherwise bypass a row trigger. Neither engine here fires any
+trigger on TRUNCATE. `UPDATE` and `DELETE` are refused; TRUNCATE is held off by
+a privilege instead, since it requires `DROP`. A test asserts the gap so it
+cannot be forgotten while it is open, and will fail loudly if an engine ever
+closes it.
+
+*There are no partial indexes.* PostgreSQL indexes only queued tasks and only
+live sessions. Here every row ever written is indexed, so the dispatch index
+grows with history rather than with the backlog. That is the strongest argument
+for pruning finished tasks on this backend.
+
+*Collations had to be pinned.* Every table is `utf8mb4_bin`. The defaults do not
+match PostgreSQL's byte comparison and do not even agree with each other —
+`utf8mb4_0900_ai_ci` on MySQL, `utf8mb4_uca1400_ai_ci` on recent MariaDB. Left
+alone, "Maya" and "maya" would collide in `users_policy_id_unique` on one
+backend and not on the other: a difference in an authorization join.
+
+**And one thing found only by running it.** The conformance suite deadlocked
+under concurrency: `Complete` locks a task by primary key, while the expired-
+lease sweep scanned `idx_tasks_lease_expiry` and took the secondary index lock
+first. Two orders, one cycle, three tasks never completed. The sweep now reads
+ids and updates by primary key so both paths lock in the same order, and
+mutating operations retry once InnoDB names them the victim — a deadlock rolls
+the transaction back entirely, so repeating it is always safe. PostgreSQL never
+exhibited this, which is the point: a second backend does not merely need
+translating, it needs running.

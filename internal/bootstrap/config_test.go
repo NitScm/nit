@@ -601,3 +601,30 @@ func TestMirrorBudgetDefaults(t *testing.T) {
 		t.Errorf("MirrorBudgetBytes = %d, want 20 GiB", cfg.MirrorBudgetBytes)
 	}
 }
+
+// A MySQL DSN carries its password too, and carries it before any scheme.
+// Redaction that keyed on "://" printed it in full.
+func TestRedactedHidesAMySQLPassword(t *testing.T) {
+	dir := isolate(t)
+
+	write(t, filepath.Join(dir, "nit.yaml"), `
+database:
+  url: "nit:hunter2@tcp(db:3306)/nit"
+security:
+  sync_key: "`+key+`"
+`, 0o600)
+
+	cfg, err := bootstrap.LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+
+	rendered := strings.Join(cfg.Redacted(), "\n")
+
+	if strings.Contains(rendered, "hunter2") {
+		t.Errorf("the MySQL password was printed:\n%s", rendered)
+	}
+	if !strings.Contains(rendered, "nit:***@tcp(db:3306)/nit") {
+		t.Errorf("the DSN was not redacted usefully:\n%s", rendered)
+	}
+}

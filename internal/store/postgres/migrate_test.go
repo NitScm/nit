@@ -6,11 +6,12 @@ import (
 	"testing"
 
 	"github.com/NitScm/nit/internal/store/postgres"
+	"github.com/NitScm/nit/internal/store/sqlmigrate"
 	"github.com/NitScm/nit/migrations"
 )
 
 func TestLoadMigrations(t *testing.T) {
-	loaded, err := postgres.LoadMigrations(migrations.FS)
+	loaded, err := sqlmigrate.Load(migrations.Postgres)
 	if err != nil {
 		t.Fatalf("LoadMigrations: %v", err)
 	}
@@ -59,7 +60,7 @@ func TestMigrateIsIdempotent(t *testing.T) {
 		t.Fatalf("reset schema: %v", err)
 	}
 
-	loaded, err := postgres.LoadMigrations(migrations.FS)
+	loaded, err := sqlmigrate.Load(migrations.Postgres)
 	if err != nil {
 		t.Fatalf("LoadMigrations: %v", err)
 	}

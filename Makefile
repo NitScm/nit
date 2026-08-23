@@ -9,10 +9,12 @@ GO := env -u GOROOT go
 BIN := bin
 CMDS := nit nitd nit-worker nitctl
 
-.PHONY: all build test test-postgres race cover lint fmt vet tidy clean policy-check db-test-setup db-test-drop
+.PHONY: all build test test-postgres test-mysql test-mariadb test-stores race cover lint fmt vet tidy clean policy-check db-test-setup db-test-drop
 
 # DSN of a throwaway database the store conformance suite may truncate.
 TEST_DSN ?= postgres://postgres:postgres@localhost:5432/nit_test
+MYSQL_TEST_DSN ?= root:nit@tcp(127.0.0.1:3308)/nit_test
+MARIADB_TEST_DSN ?= root:nit@tcp(127.0.0.1:3307)/nit_test
 
 all: build
 
@@ -31,6 +33,24 @@ test:
 # (two workers claiming the same branch) only exist in the SQL.
 test-postgres: db-test-setup
 	NIT_TEST_POSTGRES='$(TEST_DSN)' $(GO) test -race -count=1 ./internal/store/postgres/
+
+# The same suite against MySQL and MariaDB. Both, not one: the two agree on
+# everything nit uses, and the only way to keep believing that is to run it.
+#
+#   docker run -d --name nit-mariadb -e MARIADB_ROOT_PASSWORD=nit \
+#       -e MARIADB_DATABASE=nit_test -p 3307:3306 mariadb:11
+#   docker run -d --name nit-mysql -e MYSQL_ROOT_PASSWORD=nit \
+#       -e MYSQL_DATABASE=nit_test -p 3308:3306 mysql:8.4
+test-mysql: build
+	./bin/nitctl migrate -dsn '$(MYSQL_TEST_DSN)'
+	NIT_TEST_MYSQL='$(MYSQL_TEST_DSN)' $(GO) test -race -count=1 ./internal/store/mysql/
+
+test-mariadb: build
+	./bin/nitctl migrate -dsn '$(MARIADB_TEST_DSN)'
+	NIT_TEST_MYSQL='$(MARIADB_TEST_DSN)' $(GO) test -race -count=1 ./internal/store/mysql/
+
+# Every backend the store claims to support.
+test-stores: test-postgres test-mysql test-mariadb
 
 db-test-setup:
 	@psql '$(TEST_DSN)' -c 'SELECT 1' >/dev/null 2>&1 || \

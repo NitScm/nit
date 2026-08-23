@@ -211,9 +211,62 @@ what `nitctl config show` prints.
 
 | File key | Variable | What it is |
 | --- | --- | --- |
-| `database.url` | `NIT_DATABASE_URL` | PostgreSQL DSN, e.g. `postgres://nit:secret@db:5432/nit?sslmode=require` |
+| `database.url` | `NIT_DATABASE_URL` | Database DSN — see [Which database](#which-database) |
 | `security.sync_key` | `NIT_SYNC_KEY` | Sync token signing key, **at least 32 bytes**, raw or base64 |
 | `policy.dir` | `NIT_POLICY_DIR` | Directory holding the policy bundle |
+
+#### Which database
+
+Three backends are supported, and the DSN is what selects one. There is no
+setting that names the engine: a DSN that names neither shape is refused at
+start-up rather than guessed at.
+
+| Engine | DSN shape |
+| --- | --- |
+| PostgreSQL | `postgres://nit:secret@db:5432/nit?sslmode=require` |
+| MySQL 8.0.16+ | `nit:secret@tcp(db:3306)/nit?tls=true` |
+| MariaDB 10.6+ | `nit:secret@tcp(db:3306)/nit?tls=true` |
+
+MySQL and MariaDB share one driver and one schema; nothing distinguishes them
+in configuration, and the conformance suite runs against both.
+
+**PostgreSQL is the recommended backend**, and the reasons are specific rather
+than a preference:
+
+- **Migrations are transactional.** A migration that fails halfway rolls back.
+  MySQL and MariaDB commit implicitly at every DDL statement, so a failure
+  there leaves a partly-applied schema and no record of the version — the error
+  names the statement that failed, and fixing it is manual. **Back up before
+  migrating those two.**
+- **The audit trail cannot be truncated.** PostgreSQL refuses `TRUNCATE` on
+  `audit_log` with a trigger. Neither MySQL nor MariaDB fires a trigger for
+  `TRUNCATE`, so on those the guarantee rests on a privilege instead — see
+  below. `UPDATE` and `DELETE` are refused on all three.
+- **The dispatch indexes are partial.** PostgreSQL indexes only queued tasks
+  and only live sessions; the other two index every row ever written, so those
+  indexes grow with history rather than with the backlog.
+
+Everything the application does behaves identically across the three. That is
+not an assertion of intent: `pkg/store/storetest` is one suite, and it runs
+against each backend in CI.
+
+##### The grant MySQL and MariaDB need
+
+`TRUNCATE` requires the `DROP` privilege. Withholding it is what stops the
+audit trail from being erased in one word, so the application account must not
+have it:
+
+```sql
+CREATE USER 'nit'@'%' IDENTIFIED BY 'secret';
+GRANT SELECT, INSERT, UPDATE, DELETE ON nit.* TO 'nit'@'%';
+```
+
+Migrations need more, and are run by a different account on purpose — a
+deployment step an operator takes, not something the server can do to itself:
+
+```sql
+GRANT ALL PRIVILEGES ON nit.* TO 'nit_migrate'@'%';
+```
 
 Each of these can come from a file it names instead, in either layer:
 

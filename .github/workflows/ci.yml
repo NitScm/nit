@@ -1,10 +1,11 @@
 # The checks every change has to pass.
 #
-# The PostgreSQL service is the point of this file. Without NIT_TEST_POSTGRES
-# the store conformance suite skips itself and the run is green while the
-# queue, the sync points and the audit trail go untested — which is precisely
-# where three real bugs were found by running against a database rather than a
-# mock.
+# The database services are the point of this file. Without NIT_TEST_POSTGRES
+# and NIT_TEST_MYSQL the store conformance suite skips itself and the run is
+# green while the queue, the sync points and the audit trail go untested —
+# which is precisely where four real bugs were found by running against a
+# database rather than a mock, the fourth being an InnoDB deadlock that only
+# appears under concurrency on one of the three backends.
 
 name: ci
 
@@ -29,6 +30,33 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
+
+      # MySQL and MariaDB both, not one of them. They agree on everything nit
+      # uses, and running only one is how that stops being true without anyone
+      # noticing.
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: nit
+          MYSQL_DATABASE: nit_test
+        ports: ['3308:3306']
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1 -unit_test -pnit || mysqladmin ping -h 127.0.0.1 -uroot -pnit"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+      mariadb:
+        image: mariadb:11
+        env:
+          MARIADB_ROOT_PASSWORD: nit
+          MARIADB_DATABASE: nit_test
+        ports: ['3307:3306']
+        options: >-
+          --health-cmd "healthcheck.sh --connect --innodb_initialized"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
 
     steps:
       - uses: actions/checkout@v4
@@ -59,12 +87,22 @@ jobs:
         run: |
           PGPASSWORD=postgres psql -h localhost -U postgres -c 'CREATE DATABASE nit_migrate_test'
           go run ./cmd/nitctl migrate -dsn 'postgres://postgres:postgres@localhost:5432/nit_test'
+          go run ./cmd/nitctl migrate -dsn 'root:nit@tcp(127.0.0.1:3308)/nit_test'
+          go run ./cmd/nitctl migrate -dsn 'root:nit@tcp(127.0.0.1:3307)/nit_test'
 
+      # NIT_TEST_MYSQL names one server, so the suite runs twice: once here
+      # against MySQL with everything else, and once below against MariaDB.
       - name: Test with the race detector
         env:
           NIT_TEST_POSTGRES: postgres://postgres:postgres@localhost:5432/nit_test
           NIT_TEST_POSTGRES_MIGRATE: postgres://postgres:postgres@localhost:5432/nit_migrate_test
+          NIT_TEST_MYSQL: root:nit@tcp(127.0.0.1:3308)/nit_test
         run: go test -race -count=1 ./...
+
+      - name: Store conformance against MariaDB
+        env:
+          NIT_TEST_MYSQL: root:nit@tcp(127.0.0.1:3307)/nit_test
+        run: go test -race -count=1 ./internal/store/mysql/
 
       - name: Policy validation dataset
         run: |

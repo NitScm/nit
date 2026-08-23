@@ -46,7 +46,7 @@ import (
 	"github.com/NitScm/nit/internal/policyloader"
 	"github.com/NitScm/nit/internal/queue"
 	"github.com/NitScm/nit/internal/server"
-	"github.com/NitScm/nit/internal/store/postgres"
+	"github.com/NitScm/nit/internal/store/connect"
 	"github.com/NitScm/nit/internal/synctoken"
 	"github.com/NitScm/nit/pkg/policy"
 )
@@ -90,7 +90,7 @@ func run(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	st, err := postgres.Open(ctx, cfg.DatabaseURL)
+	st, err := connect.Open(ctx, cfg.DatabaseURL)
 	if err != nil {
 		return err
 	}

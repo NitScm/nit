@@ -599,24 +599,37 @@ func present(set bool) string {
 }
 
 // redactURL keeps a DSN readable without printing its password.
+//
+// Both shapes have to be handled. A PostgreSQL URL puts its credentials after
+// "://"; a MySQL DSN has no scheme at all and starts with them —
+// "user:password@tcp(host:3306)/db". An earlier version keyed on the scheme and
+// returned anything without one unchanged, which printed a MySQL password in
+// full the moment that backend was supported.
 func redactURL(raw string) string {
 	if raw == "" {
 		return ""
 	}
 
 	at := strings.LastIndex(raw, "@")
-	scheme := strings.Index(raw, "://")
-
-	if at < 0 || scheme < 0 || at < scheme {
+	if at < 0 {
 		return raw
 	}
 
-	credentials := raw[scheme+3 : at]
+	start := 0
+	if scheme := strings.Index(raw, "://"); scheme >= 0 {
+		if scheme > at {
+			// An "@" before the scheme is not a credential separator.
+			return raw
+		}
+		start = scheme + 3
+	}
+
+	credentials := raw[start:at]
 	if colon := strings.Index(credentials, ":"); colon >= 0 {
 		credentials = credentials[:colon] + ":***"
 	}
 
-	return raw[:scheme+3] + credentials + raw[at:]
+	return raw[:start] + credentials + raw[at:]
 }
 
 // decodeSyncKey accepts a base64 key or a raw one.

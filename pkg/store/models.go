@@ -1,12 +1,14 @@
 // Package store defines the persistence contract of the control plane, and the
 // domain records it stores.
 //
-// The interfaces here are what the server and the workers depend on; the
-// PostgreSQL implementation lives in store/postgres and an in-memory one in
-// store/memory. That split is not ceremony: the queue semantics — partition
-// exclusion, lease expiry, fencing tokens, idempotent submission — are subtle
-// enough that they must be testable without a database, and they must behave
-// identically in both implementations. A shared conformance suite enforces that.
+// The interfaces here are what the server and the workers depend on. Three
+// implementations live under internal/store: postgres, mysql (which serves
+// MariaDB too) and memory. That split is not ceremony: the queue semantics —
+// partition exclusion, lease expiry, fencing tokens, idempotent submission —
+// are subtle enough that they must be testable without a database, and all
+// three must behave identically. The conformance suite in store/storetest is
+// what enforces that, and it is the only reason a second SQL backend is safe
+// to offer at all.
 package store
 
 import (

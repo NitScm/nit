@@ -19,8 +19,7 @@ import (
 	"github.com/NitScm/nit/internal/bootstrap"
 	"github.com/NitScm/nit/internal/buildinfo"
 	"github.com/NitScm/nit/internal/policyloader"
-	"github.com/NitScm/nit/internal/store/postgres"
-	"github.com/NitScm/nit/migrations"
+	"github.com/NitScm/nit/internal/store/connect"
 	"github.com/NitScm/nit/pkg/policy"
 	policyconfig "github.com/NitScm/nit/pkg/policy/config"
 	"github.com/NitScm/nit/pkg/store"
@@ -258,23 +257,11 @@ func policyExplain(args []string) error {
 func migrate(args []string) error {
 	fs := flag.NewFlagSet("migrate", flag.ContinueOnError)
 
-	dsn := fs.String("dsn", "", "PostgreSQL DSN (defaults to the configured database.url)")
+	dsn := fs.String("dsn", "", "database DSN (defaults to the configured database.url)")
 	status := fs.Bool("status", false, "list migrations without applying anything")
 
 	if err := fs.Parse(args); err != nil {
 		return err
-	}
-
-	loaded, err := postgres.LoadMigrations(migrations.FS)
-	if err != nil {
-		return err
-	}
-
-	if *status {
-		for _, m := range loaded {
-			fmt.Printf("  %04d  %s\n", m.Version, m.Name)
-		}
-		return nil
 	}
 
 	resolved := *dsn
@@ -290,15 +277,30 @@ func migrate(args []string) error {
 		return fmt.Errorf("-dsn is required (or set database.url, or %s)", bootstrap.EnvDatabaseURL)
 	}
 
-	ctx := context.Background()
-
-	s, err := postgres.Open(ctx, resolved)
+	// Resolved before -status, because the migrations listed have to be the
+	// ones that would actually be applied: the two backends carry the same
+	// versions but not the same SQL.
+	backend, err := connect.Detect(resolved)
 	if err != nil {
 		return err
 	}
-	defer s.Close()
 
-	applied, err := postgres.Migrate(ctx, s.Pool(), loaded)
+	loaded, err := connect.Migrations(backend)
+	if err != nil {
+		return err
+	}
+
+	if *status {
+		fmt.Printf("backend: %s\n", backend)
+		for _, m := range loaded {
+			fmt.Printf("  %04d  %s\n", m.Version, m.Name)
+		}
+		return nil
+	}
+
+	ctx := context.Background()
+
+	applied, err := connect.Migrate(ctx, resolved)
 	if err != nil {
 		return err
 	}
@@ -367,7 +369,7 @@ func token(args []string) error {
 		return err
 	}
 
-	st, err := postgres.Open(ctx, resolvedDSN)
+	st, err := connect.Open(ctx, resolvedDSN)
 	if err != nil {
 		return err
 	}
