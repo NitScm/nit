@@ -72,6 +72,7 @@ pkg/         pure domain — no IO, no clock, no logging, importable by anyone
   protocol/  wire types shared by CLI, control plane and workers
   gitx/      git operations behind an interface (exec implementation)
   forge/     hosting provider abstraction (GitHub, GitLab, Gitea, plain SSH)
+  nitd/      assembles and runs a server — the one package here that does IO
   store/     the persistence contract, and storetest/ which proves a backend
   blob/      the contract for content-addressed patch payloads
   audit/     the sink an audit record can additionally be written to

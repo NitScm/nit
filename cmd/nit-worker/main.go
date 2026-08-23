@@ -27,20 +27,10 @@ import (
 	"os"
 	"os/signal"
 	"strings"
-	"sync"
 	"syscall"
 
-	"github.com/NitScm/nit/internal/blob/filesystem"
-	"github.com/NitScm/nit/internal/bootstrap"
 	"github.com/NitScm/nit/internal/buildinfo"
-	"github.com/NitScm/nit/internal/policyloader"
-	"github.com/NitScm/nit/internal/queue"
-	"github.com/NitScm/nit/internal/store/connect"
-	"github.com/NitScm/nit/internal/synctoken"
-	"github.com/NitScm/nit/internal/worker"
-	"github.com/NitScm/nit/pkg/forge"
-	"github.com/NitScm/nit/pkg/gitx"
-	"github.com/NitScm/nit/pkg/policy"
+	"github.com/NitScm/nit/pkg/nitd"
 	"github.com/NitScm/nit/pkg/protocol"
 )
 
@@ -51,6 +41,8 @@ func main() {
 	}
 }
 
+// run is deliberately thin: the assembly lives in pkg/nitd, and this binary
+// calls the same entry point an out-of-tree worker does.
 func run(args []string) error {
 	fs := flag.NewFlagSet("nit-worker", flag.ContinueOnError)
 
@@ -58,7 +50,7 @@ func run(args []string) error {
 
 	queues := fs.String("queues", "push,pull", "task kinds this worker takes")
 	concurrency := fs.Int("concurrency", 1, "runners in this process")
-	name := fs.String("name", hostname(), "identifier recorded on leases")
+	name := fs.String("name", "", "identifier recorded on leases (default: the hostname)")
 	configFile := fs.String("config", "", "configuration file (see docs/CONFIGURATION.md)")
 
 	if err := fs.Parse(args); err != nil {
@@ -70,17 +62,12 @@ func run(args []string) error {
 		return nil
 	}
 
-	cfg, err := bootstrap.LoadConfigFrom(*configFile)
+	kinds, err := parseKinds(*queues)
 	if err != nil {
 		return err
 	}
-	if cfg.DatabaseURL == "" {
-		return errors.New(bootstrap.EnvDatabaseURL + " is required")
-	}
 
-	log := bootstrap.NewLogger(cfg.LogLevel)
-
-	kinds, err := parseKinds(*queues)
+	cfg, err := nitd.Load(*configFile)
 	if err != nil {
 		return err
 	}
@@ -88,113 +75,14 @@ func run(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	st, err := connect.Open(ctx, cfg.DatabaseURL)
-	if err != nil {
-		return err
-	}
-	defer st.Close()
-
-	loader, err := policyloader.New(cfg.PolicyDir, log)
-	if err != nil {
-		return err
-	}
-
-	blobs, err := filesystem.New(cfg.BlobDir)
-	if err != nil {
-		return err
-	}
-
-	signer, err := synctoken.NewSigner(cfg.SyncKey)
-	if err != nil {
-		return err
-	}
-
-	git := gitx.NewExecGit()
-
-	// Appended after the inherited environment, so a configured value overrides
-	// a GIT_SSH_COMMAND the host happens to export. A setting that silently did
-	// nothing on such a host would be worse than no setting at all. Left unset,
-	// nothing is appended and the inherited configuration stands.
-	if cfg.GitSSHCommand != "" {
-		git.Env = append(git.Env, "GIT_SSH_COMMAND="+cfg.GitSSHCommand)
-	}
-
-	version, err := git.Version(ctx)
-	if err != nil {
-		return fmt.Errorf("git is not usable: %w", err)
-	}
-
-	w, err := worker.New(worker.Config{
-		WorkDir:           cfg.WorkDir,
-		MirrorBudgetBytes: cfg.MirrorBudgetBytes,
-		Tenant:            policy.DefaultTenant,
-		MaxPatchBytes:     cfg.MaxPatchBytes,
-		PullArtifactTTL:   cfg.PullTTL,
-		Credentials:       forge.Credentials{Token: cfg.ForgeToken},
-	}, worker.Deps{
-		Store:      st,
-		Blobs:      blobs,
-		Git:        git,
-		Forges:     forge.NewRegistry(),
-		Policy:     loader,
-		SyncTokens: signer,
-		Log:        log,
-	})
-	if err != nil {
-		return err
-	}
-
-	q := queue.New(st.Tasks(), queue.Options{
-		LeaseFor:    cfg.LeaseDuration,
-		MaxAttempts: cfg.MaxAttempts,
-		PollEvery:   cfg.QueuePoll,
-	})
-
-	log.Info("nit-worker starting",
-		"name", *name,
-		"config", cfg.ConfigFile,
-		"lease", cfg.LeaseDuration,
-		"queues", *queues,
-		"concurrency", *concurrency,
-		"git", version,
-		"policy", loader.Current().Version())
-
-	var wg sync.WaitGroup
-
-	// Concurrency comes from running several runners, not from fanning out
-	// inside one: each runner holds one clone at a time, which keeps the disk
-	// budget of a worker something an operator can reason about.
-	for i := range max(1, *concurrency) {
-		holder := fmt.Sprintf("%s-%d", *name, i)
-
-		wg.Add(1)
-
-		go func() {
-			defer wg.Done()
-
-			if err := queue.NewRunner(q, holder, w.Handle, log, kinds...).Run(ctx); err != nil {
-				log.Error("runner stopped", "holder", holder, "error", err)
-			}
-		}()
-	}
-
-	wg.Add(1)
-
-	go func() {
-		defer wg.Done()
-
-		if err := loader.Watch(ctx, cfg.PolicyReload); err != nil {
-			log.Error("policy watcher stopped", "error", err)
-		}
-	}()
-
-	wg.Wait()
-
-	log.Info("nit-worker stopped")
-
-	return nil
+	return nitd.Work(ctx, cfg, nitd.WorkerOptions{
+		Name:        *name,
+		Concurrency: *concurrency,
+		Kinds:       kinds,
+	}, nitd.WorkerDeps{})
 }
 
+// parseKinds turns the -queues flag into the restriction the store applies.
 func parseKinds(spec string) ([]protocol.TaskKind, error) {
 	var kinds []protocol.TaskKind
 
@@ -218,12 +106,4 @@ func parseKinds(spec string) ([]protocol.TaskKind, error) {
 	}
 
 	return kinds, nil
-}
-
-func hostname() string {
-	name, err := os.Hostname()
-	if err != nil {
-		return "worker"
-	}
-	return name
 }

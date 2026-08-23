@@ -950,3 +950,51 @@ git history answers that, with blame and rollback, which is why rules live in
 files. What only this table holds is refusals — which leave no trace on the
 forge because they never reached it — and deliveries, which are the evidence a
 read rule was applied. The comment is corrected in both dialects.
+
+---
+
+## D38 — `pkg/nitd`, the one package in `pkg/` that performs IO
+
+**Decision.** `pkg/nitd` assembles and runs the control plane and the worker.
+`cmd/nitd` and `cmd/nit-worker` are built on it, and so is anything outside this
+module. It takes the only exception to the rule that `pkg/` performs no IO.
+
+**Why it had to exist.** `internal/server`, `internal/worker`,
+`internal/bootstrap` and `internal/store/connect` are internal, so nothing
+outside the module could assemble a server. That is correct for the parts and
+wrong for the whole: `store.Store`, `blob.Store`, `policy.Source` and
+`audit.Sink` are all public extension points, and until now an implementation of
+one could be written but never *run*.
+
+Found by building `nit-enterprise` — the compiler said it plainly:
+`use of internal package github.com/NitScm/nit/internal/server not allowed`.
+
+**Why the exception is safe.** The rule protects the authorization path from
+acquiring IO dependencies. This package is a leaf: nothing else in the module
+imports it, so no IO of its can reach anything. That reasoning decays the moment
+somebody imports it for a helper, which is why `boundary_test.go` walks the
+module's import graph and fails if any package other than the two binaries
+imports it — verified to catch both a plain violation and one that would create
+an import cycle.
+
+**Why the binaries were rewritten on it** rather than left alone. A façade used
+only by outsiders drifts from what the product does within a release. `cmd/nitd`
+went from 202 lines to 84 and calls `nitd.Serve(ctx, cfg, nitd.Deps{})`; a zero
+`Deps` is not a degraded mode, it is *the* mode. The two shipped binaries are
+therefore the façade's most demanding test.
+
+**Config is an alias, not a copy.** `type Config = bootstrap.Config`. The
+configuration was already a public contract — one-to-one with `nit.yaml`, every
+field documented in `docs/CONFIGURATION.md` — so the alias makes that visible
+rather than creating it, and a parallel struct of twenty-five fields would drift
+from the one the file maps to. An alias crosses the module boundary without the
+caller importing anything internal; that was verified before the design was
+settled, not assumed.
+
+**What it deliberately does not do.** It traps no signals. A process embedding
+nit alongside other things has its own idea of what `SIGTERM` means, so `cmd/`
+wraps the context and the package only respects it.
+
+**Ownership is explicit.** What a caller supplies, the caller closes; what the
+package opens, it closes. A caller sharing one store between a server and a
+worker in one process would otherwise have it closed underneath them.

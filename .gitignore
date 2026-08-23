@@ -2,6 +2,18 @@
 /bin/
 *.test
 
+# `go build ./cmd/nitd` writes its binary into the working directory, so a
+# stray one at the root is one `git add -A` away from a 17 MB commit.
+/nit
+/nitd
+/nitctl
+/nit-worker
+
+# A bundle of the history before the identity reset. Keeping one inside the
+# repository defeats the reset: the old commits, and the old author, come back
+# with every clone.
+*.bundle
+
 # Coverage
 coverage.out
 *.out

@@ -31,24 +31,14 @@ package main
 
 import (
 	"context"
-	"errors"
 	"flag"
 	"fmt"
 	"os"
 	"os/signal"
-	"sync"
 	"syscall"
 
-	"github.com/NitScm/nit/internal/auth"
-	"github.com/NitScm/nit/internal/blob/filesystem"
-	"github.com/NitScm/nit/internal/bootstrap"
 	"github.com/NitScm/nit/internal/buildinfo"
-	"github.com/NitScm/nit/internal/policyloader"
-	"github.com/NitScm/nit/internal/queue"
-	"github.com/NitScm/nit/internal/server"
-	"github.com/NitScm/nit/internal/store/connect"
-	"github.com/NitScm/nit/internal/synctoken"
-	"github.com/NitScm/nit/pkg/policy"
+	"github.com/NitScm/nit/pkg/nitd"
 )
 
 func main() {
@@ -58,6 +48,10 @@ func main() {
 	}
 }
 
+// run is deliberately thin. Everything it used to do lives in pkg/nitd, which
+// is what an out-of-tree assembly calls — and the reason this binary calls it
+// too is that a façade only used by outsiders drifts from what nit does within
+// a release.
 func run(args []string) error {
 	fs := flag.NewFlagSet("nitd", flag.ContinueOnError)
 
@@ -74,129 +68,17 @@ func run(args []string) error {
 		return nil
 	}
 
-	cfg, err := bootstrap.LoadConfigFrom(*configFile)
+	cfg, err := nitd.Load(*configFile)
 	if err != nil {
 		return err
-	}
-
-	log := bootstrap.NewLogger(cfg.LogLevel)
-
-	if cfg.DatabaseURL == "" {
-		return errors.New(bootstrap.EnvDatabaseURL + " is required")
 	}
 
 	// Signals are trapped before anything long-running starts, so a Ctrl-C
 	// during start-up is a clean exit rather than a half-initialized process.
+	// pkg/nitd deliberately does not do this: a process embedding nit
+	// alongside other things has its own idea of what a signal means.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	st, err := connect.Open(ctx, cfg.DatabaseURL)
-	if err != nil {
-		return err
-	}
-	defer st.Close()
-
-	loader, err := policyloader.New(cfg.PolicyDir, log)
-	if err != nil {
-		return err
-	}
-
-	if err := bootstrap.ReconcilePolicy(ctx, st, loader.Current(), policy.DefaultTenant); err != nil {
-		return err
-	}
-
-	// A repository added to the bundle gets its row without anyone running a
-	// command; a hot reload would otherwise leave the API rejecting it as
-	// unknown.
-	loader.OnReload = func(p *policy.Policy) {
-		if err := bootstrap.ReconcilePolicy(context.WithoutCancel(ctx), st, p, policy.DefaultTenant); err != nil {
-			log.Error("reconcile after policy reload failed", "error", err)
-		}
-	}
-
-	blobs, err := filesystem.New(cfg.BlobDir)
-	if err != nil {
-		return err
-	}
-
-	signer, err := synctoken.NewSigner(cfg.SyncKey)
-	if err != nil {
-		return err
-	}
-
-	q := queue.New(st.Tasks(), queue.Options{
-		LeaseFor:    cfg.LeaseDuration,
-		MaxAttempts: cfg.MaxAttempts,
-		PollEvery:   cfg.QueuePoll,
-	})
-
-	srv, err := server.New(server.Config{
-		Addr:            cfg.Addr,
-		Tenant:          policy.DefaultTenant,
-		MaxPatchBytes:   cfg.MaxPatchBytes,
-		AdminGroups:     cfg.AdminGroups,
-		AllowedOrigins:  cfg.CORSOrigins,
-		PullArtifactTTL: cfg.PullTTL,
-		EventMaxWait:    cfg.EventMaxWait,
-	}, server.Deps{
-		Store:      st,
-		Queue:      q,
-		Blobs:      blobs,
-		Policy:     loader,
-		Auth:       auth.NewService(st, loader, policy.DefaultTenant, nil),
-		SyncTokens: signer,
-		Log:        log,
-	})
-	if err != nil {
-		return err
-	}
-
-	var wg sync.WaitGroup
-
-	// The reaper returns tasks abandoned by dead workers to the queue. Without
-	// it a crashed worker's branch stays blocked until something else happens
-	// to claim.
-	background(&wg, func() {
-		if err := queue.NewReaper(q, cfg.ReapEvery, log).Run(ctx); err != nil {
-			log.Error("reaper stopped", "error", err)
-		}
-	})
-
-	background(&wg, func() {
-		if err := loader.Watch(ctx, cfg.PolicyReload); err != nil {
-			log.Error("policy watcher stopped", "error", err)
-		}
-	})
-
-	log.Info("nitd starting",
-		"addr", cfg.Addr,
-		"config", configOrigin(cfg.ConfigFile),
-		"admin_groups", cfg.AdminGroups,
-		"policy", loader.Current().Version(),
-		"repositories", len(loader.Current().Repositories()))
-
-	serveErr := srv.ListenAndServe(ctx)
-
-	wg.Wait()
-
-	log.Info("nitd stopped")
-
-	return serveErr
-}
-
-// configOrigin describes where settings came from, for the start-up line.
-func configOrigin(path string) string {
-	if path == "" {
-		return "environment and defaults"
-	}
-	return path
-}
-
-func background(wg *sync.WaitGroup, fn func()) {
-	wg.Add(1)
-
-	go func() {
-		defer wg.Done()
-		fn()
-	}()
+	return nitd.Serve(ctx, cfg, nitd.Deps{})
 }

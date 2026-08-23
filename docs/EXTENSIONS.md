@@ -140,6 +140,28 @@ that constraint, which is why this is a seam rather than an internal detail.
 Set one on `server.Deps.Blobs` and `worker.Deps.Blobs`. Both must be the same
 store: `nitd` writes the authorized patch and a worker reads it back.
 
+## Running what you wrote
+
+An implementation is only useful if something can run it. `pkg/nitd` is that
+something:
+
+```go
+import "github.com/NitScm/nit/pkg/nitd"
+
+cfg, err := nitd.Load("")            // the same file and environment nitd reads
+
+err = nitd.Serve(ctx, cfg, nitd.Deps{
+    Blobs: myObjectStore,            // any seam you filled
+})
+```
+
+Every `Deps` field may be nil, and a nil field is built from `Config` exactly as
+the shipped binaries build it — so a zero `Deps` is what `nitd` does. `nitd.Work`
+is the same for a worker.
+
+`cmd/nitd` and `cmd/nit-worker` are built on this, which is the point: a façade
+used only by people outside the module would drift from what nit actually does.
+
 ## What is deliberately not a seam
 
 **Enforcement.** `pkg/enforce` decides what a push may land and what a pull may

@@ -42,6 +42,12 @@ This document describes a set of rules and conventions maintainers use in this r
   without infrastructure, and an interface does not threaten that — a package
   that opened a connection would.
 
+  **One package takes an exception: `pkg/nitd`.** It assembles and runs a
+  server, so it opens a database and listens on a socket. It is allowed to
+  because it is a *leaf* — nothing else in the module imports it, so its IO
+  cannot reach the authorization path — and `pkg/nitd/boundary_test.go` fails
+  if that stops being true. Do not import it from anywhere but `cmd/`.
+
 * Design decisions are numbered in `docs/DECISIONS.md`. A change contradicting
   one adds an entry superseding it rather than working around it in code.
 
