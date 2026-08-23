@@ -98,6 +98,23 @@ Uploaded push patches and generated pull patches, addressed by the SHA-256 of
 their bytes. One implementation ships: a directory, in
 `internal/blob/filesystem`.
 
+**`pkg/blob/blobtest` is what makes this seam real**, the same way `storetest`
+does for `store.Store`:
+
+```go
+import "github.com/NitScm/nit/pkg/blob/blobtest"
+
+func TestConformance(t *testing.T) {
+    blobtest.Run(t, func(t *testing.T) blob.Store { return open(t) })
+}
+```
+
+It asserts the obligations below rather than describing them — that a failed
+Put leaves nothing reachable, that a mismatched digest is refused *and* not
+stored, that a missing blob is an error and not empty content, that concurrent
+writers of the same bytes never see each other's half-written blob. If it
+passes, the contract holds.
+
 Content addressing is what makes this replaceable cheaply. A blob's name is
 derived from its bytes, so an implementation has nothing to coordinate: writing
 the same bytes twice is the same write, and nothing has to be told what a digest
