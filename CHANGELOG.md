@@ -81,6 +81,12 @@ Tagging `v*` publishes archives for Linux, macOS and Windows, `.deb` and `.rpm`
 packages, and a checksums file, through `.goreleaser.yaml` and
 `.github/workflows/release.yml`.
 
+Two archives, split by who runs what: `nit_…` carries `nit` and `nitctl`,
+`nit-server_…` carries `nitd` and `nit-worker`. Neither ships `docs/` — those
+are engineering documents for people modifying nit, and a copy on disk drifts
+from the site and from the binary it arrived with. README, SECURITY and the
+licence travel with every artifact.
+
 `nit`, `nitd`, `nit-worker` and `nitctl` all answer `version`, stamped at
 release time and falling back to what the toolchain records — so a binary
 installed with `go install` still identifies itself. A build that cannot say

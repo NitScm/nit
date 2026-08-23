@@ -88,12 +88,18 @@ archives:
     files:
       - README.md
       - LICENSE
+      - CHANGELOG.md
       - SECURITY.md
-      - src: docs/*.md
-        dst: docs
 
 # Ubuntu and Debian install a .deb; RHEL and Fedora an .rpm. Both carry all
 # four binaries: a package is installed on a machine that may be a server.
+#
+# What they do not carry is docs/. Those are engineering documents — the
+# protocol, the data model, the numbered design decisions — written for people
+# modifying nit, not installing it. Shipping them in a package also freezes
+# them: a copy on disk drifts from the site and from the binary it arrived
+# with, while the link in the README stays right. README, SECURITY and the
+# licence are enough, and are what a package is expected to carry anyway.
 nfpms:
   - id: packages
     ids: [cli, nitctl, nitd, nit-worker]
@@ -113,10 +119,6 @@ nfpms:
     dependencies:
       - git
     contents:
-      # A glob, not `type: dir` — that creates the directory and copies
-      # nothing, which packages an empty folder and looks like it worked.
-      - src: docs/*.md
-        dst: /usr/share/doc/nit/
       - src: LICENSE
         dst: /usr/share/doc/nit/LICENSE
       - src: README.md
