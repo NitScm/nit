@@ -83,7 +83,7 @@ func (s *Server) handleAdminTasks(w http.ResponseWriter, r *http.Request) error 
 	query := r.URL.Query()
 
 	filter := store.TaskFilter{
-		Tenant: s.cfg.Tenant,
+		Tenant: tenantOf(ctx),
 		Branch: query.Get("branch"),
 		Limit:  intParam(query.Get("limit"), 50, 500),
 	}
@@ -228,7 +228,7 @@ func (s *Server) handleAdminAudit(w http.ResponseWriter, r *http.Request) error 
 	query := r.URL.Query()
 
 	q := store.AuditQuery{
-		Tenant:    s.cfg.Tenant,
+		Tenant:    tenantOf(ctx),
 		RequestID: query.Get("request_id"),
 		Limit:     intParam(query.Get("limit"), 100, 1000),
 	}
@@ -257,7 +257,7 @@ func (s *Server) handleAdminAudit(w http.ResponseWriter, r *http.Request) error 
 	}
 
 	if user := query.Get("user"); user != "" {
-		record, err := s.deps.Store.Users().ByPolicyID(ctx, s.cfg.Tenant, policy.UserID(user))
+		record, err := s.deps.Store.Users().ByPolicyID(ctx, tenantOf(ctx), policy.UserID(user))
 		if err != nil {
 			return fail(http.StatusNotFound, "unknown_user", "unknown user %q", user)
 		}
@@ -333,7 +333,7 @@ func (s *Server) handleAdminStats(w http.ResponseWriter, r *http.Request) error 
 		protocol.TaskSucceeded, protocol.TaskFailed, protocol.TaskCancelled,
 	} {
 		tasks, err := s.deps.Store.Tasks().List(ctx, store.TaskFilter{
-			Tenant: s.cfg.Tenant,
+			Tenant: tenantOf(ctx),
 			States: []protocol.TaskState{state},
 			Limit:  1000,
 		})
@@ -363,7 +363,7 @@ func (s *Server) handleAdminStats(w http.ResponseWriter, r *http.Request) error 
 	}
 
 	denials, err := s.deps.Store.Audit().Query(ctx, store.AuditQuery{
-		Tenant: s.cfg.Tenant,
+		Tenant: tenantOf(ctx),
 		Since:  s.deps.Now().Add(-24 * time.Hour),
 		Limit:  1000,
 	})

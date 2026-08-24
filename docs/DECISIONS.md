@@ -1196,3 +1196,41 @@ It is transitional and should be removed once no blob predates the move, which
 is one artifact TTL — a day by default. Deletes reach both stores so the old
 location empties itself rather than being kept alive by the thing meant to
 retire it.
+
+---
+
+## D44 — A request's tenant comes from its token, not from the process
+
+**Decision.** `store.SessionStore.ByTokenHash` no longer takes a tenant,
+`auth.Principal` carries the one resolved from the session, and every handler
+reads it from the request rather than from `server.Config.Tenant`.
+
+**Why the lookup lost its tenant argument.** A token is what *resolves* a
+tenant, so asking the caller to supply one is asking it for the answer to the
+question it is asking. The hash is unique across the deployment by constraint
+(`sessions_token_hash_unique`), so the lookup is unambiguous without it, and the
+tenant then comes off the session — which is authoritative.
+
+That is not a weakening. The old filter was redundant against a correct store:
+matching a 32-byte hash already identifies one row, and the tenant it carried
+was assumed rather than checked.
+
+**What this finishes, and what it does not.** It is the first half of gap 1 in
+`saas-thinking/03`. A process no longer serves exactly one customer by
+construction. What remains is the half that makes forgetting *impossible* rather
+than merely unnecessary: an absent principal still falls back to the default
+tenant, which is right today and becomes "read the first tenant's data" the day
+there is a second one. PostgreSQL row-level security is the second layer, and it
+is not here.
+
+**Issuance still takes a tenant, deliberately.** `Service.Issue` provisions a
+credential *into* a tenant; that is an operator naming a customer, not a request
+discovering one. Resolving it from context there would mean a token could only
+be issued for whoever happened to be asking.
+
+**A test that passed for the wrong reason, and how it was found.** The first
+version queried from the default tenant and asserted another tenant's repository
+was absent — which held whether the resolution worked or not, because the right
+answer and the wrong one coincide there. Removing the resolution did not fail
+it. It now queries from the *second* tenant, where the two answers differ, and
+the mutation fails it.

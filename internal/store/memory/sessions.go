@@ -6,7 +6,6 @@ import (
 	"sort"
 	"time"
 
-	"github.com/NitScm/nit/pkg/policy"
 	"github.com/NitScm/nit/pkg/store"
 )
 
@@ -29,7 +28,8 @@ func (s *sessionStore) Create(_ context.Context, sess *store.Session) (*store.Se
 	return cloneSession(&created), nil
 }
 
-func (s *sessionStore) ByTokenHash(_ context.Context, tenant policy.TenantID, hash []byte) (*store.Session, error) {
+// The lookup carries no tenant: the token is what resolves one.
+func (s *sessionStore) ByTokenHash(_ context.Context, hash []byte) (*store.Session, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -37,7 +37,7 @@ func (s *sessionStore) ByTokenHash(_ context.Context, tenant policy.TenantID, ha
 		// bytes.Equal rather than a constant-time compare: the value being
 		// matched is already a hash of the secret, so a timing signal here
 		// leaks nothing an attacker could use to recover the token.
-		if sess.TenantID == tenant && bytes.Equal(sess.TokenHash, hash) {
+		if bytes.Equal(sess.TokenHash, hash) {
 			return cloneSession(sess), nil
 		}
 	}

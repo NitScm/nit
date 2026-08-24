@@ -49,6 +49,11 @@ type fixture struct {
 	token      string
 	otherToken string
 	adminToken string
+
+	// authService and policySource are what a test needs to authenticate on
+	// its own — a second tenant's token, for instance.
+	authService  *auth.Service
+	policySource policyloader.Source
 }
 
 // testPolicy grants devs src/ and docs/, and hides secrets/ from them.
@@ -68,8 +73,22 @@ func testPolicy(t *testing.T) *policy.Policy {
 		},
 		Repositories: []policy.Repository{
 			{ID: "backend-api", Remote: "https://example.com/backend-api.git", Forge: "github", DefaultBranch: "main"},
+			// Declared in the bundle so a tenant test can make it readable.
+			// One bundle serves the whole process today — gap 2 of
+			// saas-thinking/03 — so a second tenant's repository has to live
+			// in the same one.
+			{ID: "globex-only", Remote: "https://globex.example/r.git", Forge: "generic", DefaultBranch: "main"},
 		},
 		Rules: map[policy.RepoID][]policy.Rule{
+			"globex-only": {
+				{
+					ID:      "devs-read-globex",
+					Subject: policy.RuleSubject{Type: policy.SubjectTypeGroup, ID: "devs"},
+					Paths:   []policy.Pattern{policy.MustParsePattern("**")},
+					Actions: []policy.Action{policy.ActionRead},
+					Effect:  policy.EffectAllow,
+				},
+			},
 			"backend-api": {
 				{
 					ID:      "devs-own-src-and-docs",
@@ -142,6 +161,9 @@ func newFixtureWith(t *testing.T, adminGroups []policy.GroupID, origins []string
 
 	authService := auth.NewService(f.store, source, policy.DefaultTenant,
 		func() time.Time { return testNow })
+
+	f.authService = authService
+	f.policySource = source
 
 	f.server, err = server.New(server.Config{
 		Tenant:            policy.DefaultTenant,

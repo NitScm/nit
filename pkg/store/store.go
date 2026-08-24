@@ -63,7 +63,15 @@ type SessionStore interface {
 	// ByTokenHash looks a session up by the hash of its token. It returns
 	// revoked and expired sessions too: the caller decides, so that an expired
 	// token can be reported as expired rather than as unknown.
-	ByTokenHash(ctx context.Context, tenant policy.TenantID, hash []byte) (*Session, error)
+	// ByTokenHash finds a session by the hash of its token, across every
+	// tenant.
+	//
+	// No tenant argument, and that is the point rather than an omission: a
+	// token is what *resolves* the tenant, so a caller cannot be asked to
+	// supply the answer to the question it is asking. The hash is unique
+	// across the deployment by constraint, so the lookup is unambiguous, and
+	// the tenant then comes off the session — which is authoritative.
+	ByTokenHash(ctx context.Context, hash []byte) (*Session, error)
 
 	ByID(ctx context.Context, id ID) (*Session, error)
 

@@ -228,6 +228,16 @@ Two identifiers are carried from day one even though they are constant today:
 - `workspace_id`, so a developer with a laptop and a desktop simply gets two
   sync points instead of a corrupted one.
 
+Three pieces of the runtime have since caught up with the schema: a request's
+tenant is resolved from its token rather than from the process's configuration
+(D44), sync tokens are signed with a key derived per tenant so misrouting one
+fails closed (D42), and blobs are stored under the tenant that owns them (D43).
+
+What is still missing is what makes forgetting impossible rather than merely
+unnecessary — an absent principal falls back to `default`, one policy bundle
+serves the whole process, and an operator's access is not tenant-scoped. Those
+matter to a hosted control plane and are described in the workspace notes.
+
 **Identity is never taken from the patch.** The author field of a commit is free
 text; anyone can forge it. Identity comes from the authenticated session, and
 the commit author is verified against it or rewritten.

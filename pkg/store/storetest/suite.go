@@ -162,7 +162,7 @@ func testSessions(t *testing.T, newStore Factory) {
 		t.Fatalf("Create: %v", err)
 	}
 
-	found, err := f.store.Sessions().ByTokenHash(ctx, policy.DefaultTenant, hash)
+	found, err := f.store.Sessions().ByTokenHash(ctx, hash)
 	if err != nil {
 		t.Fatalf("ByTokenHash: %v", err)
 	}
@@ -176,7 +176,7 @@ func testSessions(t *testing.T, newStore Factory) {
 		t.Error("an expired session must not be active")
 	}
 
-	if _, err := f.store.Sessions().ByTokenHash(ctx, policy.DefaultTenant, []byte("other")); !errors.Is(err, store.ErrNotFound) {
+	if _, err := f.store.Sessions().ByTokenHash(ctx, []byte("other")); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("got %v, want ErrNotFound for an unknown token", err)
 	}
 

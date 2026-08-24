@@ -38,7 +38,7 @@ func (s *Server) handlePull(w http.ResponseWriter, r *http.Request) error {
 		return fail(http.StatusBadRequest, "bad_request", "request_id is required")
 	}
 
-	if existing, err := s.deps.Store.Tasks().ByRequestID(ctx, s.cfg.Tenant, req.RequestID); err == nil {
+	if existing, err := s.deps.Store.Tasks().ByRequestID(ctx, tenantOf(ctx), req.RequestID); err == nil {
 		writeJSON(w, http.StatusAccepted, protocol.PullResponse{TaskID: string(existing.ID)})
 		return nil
 	} else if !errors.Is(err, store.ErrNotFound) {
@@ -86,7 +86,7 @@ func (s *Server) handlePull(w http.ResponseWriter, r *http.Request) error {
 	}
 
 	task, _, err := s.deps.Queue.Submit(ctx, &store.Task{
-		TenantID:     s.cfg.Tenant,
+		TenantID:     tenantOf(ctx),
 		RequestID:    req.RequestID,
 		Kind:         protocol.TaskPull,
 		UserID:       principal.User.ID,
@@ -102,7 +102,7 @@ func (s *Server) handlePull(w http.ResponseWriter, r *http.Request) error {
 	}
 
 	s.audit.Record(ctx, repo.PolicyRepoID, &store.AuditRecord{
-		TenantID:      s.cfg.Tenant,
+		TenantID:      tenantOf(ctx),
 		OccurredAt:    s.deps.Now(),
 		ActorUserID:   principal.User.ID,
 		ActorLabel:    string(principal.User.PolicyUserID),

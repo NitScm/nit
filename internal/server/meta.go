@@ -53,7 +53,7 @@ func (s *Server) handleRepositories(w http.ResponseWriter, r *http.Request) erro
 	ctx := r.Context()
 	principal := auth.PrincipalFrom(ctx)
 
-	repos, err := s.deps.Store.Repositories().List(ctx, s.cfg.Tenant)
+	repos, err := s.deps.Store.Repositories().List(ctx, tenantOf(ctx))
 	if err != nil {
 		return err
 	}
@@ -143,7 +143,7 @@ func (s *Server) handleCreateWorkspace(w http.ResponseWriter, r *http.Request) e
 	}
 
 	workspace, err := s.deps.Store.Workspaces().Create(ctx, &store.Workspace{
-		TenantID:  s.cfg.Tenant,
+		TenantID:  tenantOf(ctx),
 		UserID:    principal.User.ID,
 		Label:     req.Label,
 		CreatedAt: s.deps.Now(),

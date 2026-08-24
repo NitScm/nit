@@ -18,7 +18,7 @@ func (s *Server) resolveRepository(ctx context.Context, name string) (*store.Rep
 		return nil, fail(http.StatusBadRequest, "bad_request", "repository is required")
 	}
 
-	repo, err := s.deps.Store.Repositories().ByPolicyID(ctx, s.cfg.Tenant, policy.RepoID(name))
+	repo, err := s.deps.Store.Repositories().ByPolicyID(ctx, tenantOf(ctx), policy.RepoID(name))
 	if errors.Is(err, store.ErrNotFound) {
 		return nil, fail(http.StatusNotFound, protocol.CodeUnknownRepository,
 			"repository %q is not under nit control", name)

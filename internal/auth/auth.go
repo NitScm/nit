@@ -59,6 +59,16 @@ type Principal struct {
 	User    *store.User
 	Session *store.Session
 
+	// Tenant is whose data this request may touch, resolved from the token
+	// rather than from the process's configuration.
+	//
+	// It is the answer to the question a multi-tenant control plane asks on
+	// every request, and it is deliberately *here* rather than in a service
+	// field: a tenant fixed at construction is a process that serves one
+	// customer, which is right for a self-hosted deployment and wrong for a
+	// hosted one.
+	Tenant policy.TenantID
+
 	// Subject is the resolved authorization principal, groups already expanded
 	// from the policy bundle in force at authentication time.
 	Subject policy.Subject
@@ -185,7 +195,7 @@ func (s *Service) Authenticate(ctx context.Context, token string) (*Principal, e
 		return nil, ErrMalformed
 	}
 
-	session, err := s.sessions.ByTokenHash(ctx, s.tenant, HashToken(token))
+	session, err := s.sessions.ByTokenHash(ctx, HashToken(token))
 	if errors.Is(err, store.ErrNotFound) {
 		return nil, ErrUnknownToken
 	}
@@ -239,6 +249,7 @@ func (s *Service) Authenticate(ctx context.Context, token string) (*Principal, e
 	return &Principal{
 		User:          user,
 		Session:       session,
+		Tenant:        session.TenantID,
 		Subject:       subject,
 		PolicyVersion: current.Version(),
 	}, nil

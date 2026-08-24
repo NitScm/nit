@@ -56,7 +56,7 @@ func (s *Server) handlePush(w http.ResponseWriter, r *http.Request) error {
 
 	// A retried submission returns its original task. Doing this first means a
 	// client that lost the response never pays for the work twice.
-	if existing, err := s.deps.Store.Tasks().ByRequestID(ctx, s.cfg.Tenant, req.RequestID); err == nil {
+	if existing, err := s.deps.Store.Tasks().ByRequestID(ctx, tenantOf(ctx), req.RequestID); err == nil {
 		return s.respondExistingPush(ctx, w, existing)
 	} else if !errors.Is(err, store.ErrNotFound) {
 		return err
@@ -175,7 +175,7 @@ func (s *Server) handlePush(w http.ResponseWriter, r *http.Request) error {
 	}
 
 	task, _, err := s.deps.Queue.Submit(ctx, &store.Task{
-		TenantID:     s.cfg.Tenant,
+		TenantID:     tenantOf(ctx),
 		RequestID:    req.RequestID,
 		Kind:         protocol.TaskPush,
 		UserID:       principal.User.ID,
@@ -270,7 +270,7 @@ func (s *Server) storePatch(ctx context.Context, raw []byte, kind store.Artifact
 	}
 
 	if _, err := s.deps.Store.Artifacts().Create(ctx, &store.Artifact{
-		TenantID:         s.cfg.Tenant,
+		TenantID:         tenantOf(ctx),
 		Digest:           descriptor.Digest,
 		Kind:             kind,
 		Size:             descriptor.Size,
@@ -331,7 +331,7 @@ func (s *Server) auditPush(ctx context.Context, principal *auth.Principal, repo 
 	}
 
 	records = append(records, &store.AuditRecord{
-		TenantID:      s.cfg.Tenant,
+		TenantID:      tenantOf(ctx),
 		OccurredAt:    now,
 		ActorUserID:   principal.User.ID,
 		ActorLabel:    string(principal.User.PolicyUserID),
@@ -344,7 +344,7 @@ func (s *Server) auditPush(ctx context.Context, principal *auth.Principal, repo 
 
 	for _, check := range result.Denials() {
 		records = append(records, &store.AuditRecord{
-			TenantID:      s.cfg.Tenant,
+			TenantID:      tenantOf(ctx),
 			OccurredAt:    now,
 			ActorUserID:   principal.User.ID,
 			ActorLabel:    string(principal.User.PolicyUserID),

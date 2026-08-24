@@ -93,8 +93,11 @@ func TestAdminTasksAndStats(t *testing.T) {
 	if stats.PolicyVersion != "test-1" {
 		t.Errorf("PolicyVersion = %q", stats.PolicyVersion)
 	}
-	if stats.Repositories != 1 {
-		t.Errorf("Repositories = %d, want 1", stats.Repositories)
+	// Derived from the bundle rather than hard-coded: the fixture's bundle
+	// grows when another test needs a repository in it, and an assertion that
+	// counts by hand fails for a reason that has nothing to do with stats.
+	if want := len(testPolicy(t).Repositories()); stats.Repositories != want {
+		t.Errorf("Repositories = %d, want %d", stats.Repositories, want)
 	}
 }
 
@@ -163,11 +166,11 @@ func TestAdminPolicy(t *testing.T) {
 	if view.Version != "test-1" {
 		t.Errorf("Version = %q", view.Version)
 	}
-	if len(view.Repositories) != 1 {
-		t.Fatalf("got %d repositories, want 1", len(view.Repositories))
+	if want := len(testPolicy(t).Repositories()); len(view.Repositories) != want {
+		t.Fatalf("got %d repositories, want %d", len(view.Repositories), want)
 	}
 
-	repo := view.Repositories[0]
+	repo := repositoryNamed(t, view.Repositories, "backend-api")
 
 	if repo.ID != "backend-api" {
 		t.Errorf("ID = %q", repo.ID)
@@ -243,4 +246,20 @@ func contains(values []string, want string) bool {
 		}
 	}
 	return false
+}
+
+// repositoryNamed picks one repository out of a view, so a test asserting on a
+// specific one does not depend on the order the bundle happens to list them in.
+func repositoryNamed(t *testing.T, repos []server.PolicyRepoView, id string) server.PolicyRepoView {
+	t.Helper()
+
+	for _, repo := range repos {
+		if repo.ID == id {
+			return repo
+		}
+	}
+
+	t.Fatalf("no repository %q in the view", id)
+
+	return server.PolicyRepoView{}
 }

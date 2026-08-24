@@ -7,7 +7,6 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/NitScm/nit/pkg/policy"
 	"github.com/NitScm/nit/pkg/store"
 )
 
@@ -41,10 +40,12 @@ func (s *sessionStore) Create(ctx context.Context, sess *store.Session) (*store.
 // with them, so that an expired token can be reported as expired instead of
 // looking like a token that never existed — the difference between "log in
 // again" and "something is very wrong".
-func (s *sessionStore) ByTokenHash(ctx context.Context, tenant policy.TenantID, hash []byte) (*store.Session, error) {
+// The lookup carries no tenant: the token is what resolves one. The hash is
+// unique across the deployment (sessions_token_hash_unique), so one row or
+// none.
+func (s *sessionStore) ByTokenHash(ctx context.Context, hash []byte) (*store.Session, error) {
 	return scanSession(s.pool.QueryRow(ctx,
-		`SELECT `+sessionColumns+` FROM sessions WHERE tenant_id = $1 AND token_hash = $2`,
-		string(tenant), hash))
+		`SELECT `+sessionColumns+` FROM sessions WHERE token_hash = $1`, hash))
 }
 
 func (s *sessionStore) ByID(ctx context.Context, id store.ID) (*store.Session, error) {
