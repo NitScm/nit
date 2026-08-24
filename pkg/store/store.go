@@ -288,6 +288,32 @@ type AuditPruner interface {
 	PruneAudit(ctx context.Context, before time.Time, batch int) (PruneResult, error)
 }
 
+// tenantKey is unexported so no other package can collide with it.
+type tenantKey struct{}
+
+// WithTenant returns a context naming whose data the operations under it may
+// touch.
+//
+// A backend may enforce it — the PostgreSQL one does, with row-level security —
+// so this is not documentation. A context without a tenant reaches a database
+// that has RLS in force and sees *nothing*, which is the intended answer: a
+// caller that forgot gets an empty result rather than somebody else's rows.
+//
+// Set it once, where the tenant is resolved, and let it flow. Threading it
+// through arguments instead is what produced the failure this exists to
+// prevent: a parameter is easy to pass wrong, and a wrong tenant is silent.
+func WithTenant(ctx context.Context, tenant policy.TenantID) context.Context {
+	return context.WithValue(ctx, tenantKey{}, tenant)
+}
+
+// TenantFrom returns the tenant a context names, or the empty string.
+//
+// Empty is meaningful: it is what a backend translates into "match nothing".
+func TenantFrom(ctx context.Context) policy.TenantID {
+	tenant, _ := ctx.Value(tenantKey{}).(policy.TenantID)
+	return tenant
+}
+
 // TaskNotifier is implemented by backends that can say when a task changed,
 // instead of being asked.
 //

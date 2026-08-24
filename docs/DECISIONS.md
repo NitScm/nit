@@ -1234,3 +1234,54 @@ was absent — which held whether the resolution worked or not, because the righ
 answer and the wrong one coincide there. Removing the resolution did not fail
 it. It now queries from the *second* tenant, where the two answers differ, and
 the mutation fails it.
+
+---
+
+## D45 — Row-level security as the second layer, and what it costs
+
+**Decision.** PostgreSQL enforces tenant isolation with policies (migration
+0005). Every connection is stamped with the tenant of the request about to use
+it, through one pool hook rather than a change to forty query methods. A context
+with no tenant stamps the empty string, which matches nothing.
+
+**Why a second layer at all.** Every query already filters on the tenant, and
+every one is correct today. The layer is for the day one is not: a
+context-carried tenant is easy to forget, and a forgotten one is not an error —
+it is a silent cross-tenant read, the one failure this product cannot survive.
+
+**One hook, not forty call sites.** pgx calls `PrepareConn` as a connection
+leaves the pool, with the caller's context, so the setting always describes the
+request about to run. Session-level rather than transaction-local, because most
+operations here are single statements with no transaction to be local to — safe
+only because every acquisition re-stamps, so a stale value can never be read.
+
+**The failure mode is silence, so it is measured rather than assumed.** A
+superuser bypasses policies entirely; a table's owner bypasses them unless the
+table is FORCEd; and FORCE does not stop a superuser. Verified on PostgreSQL 17
+while writing this: as the superuser that created the tables, a policy
+restricting rows to one tenant returned every row under ENABLE *and* under
+FORCE. Under an ordinary role it returned one row with the setting present and
+none with it absent.
+
+That is why `nitd` reports on start-up whether the policies apply to it. A
+deployment that installs them and connects as a superuser is not
+half-protected — it is unprotected, and nothing else would say so.
+
+**`sessions` is exempt, and cannot not be.** It resolves the tenant:
+authentication looks a token up before anybody knows whose it is. A policy there
+would make every login return zero rows. What protects it is what always did —
+a token hash is 32 unguessable bytes under a unique constraint, so reaching
+another tenant's session means guessing their token, which is the same barrier
+as impersonating them.
+
+**A worker cannot run under these policies, and that is the honest cost.** It
+drains one queue for every tenant; `Claim` takes the oldest dispatchable task,
+whoever owns it, so there is no tenant to stamp — finding out whose it is *is*
+the query. Under RLS a worker sees an empty queue. A deployment answers that
+deliberately: a `BYPASSRLS` role for the worker, which is trusted infrastructure
+rather than a tenant and already holds the forge credential, or a per-tenant
+`Claim`, which ends the single queue. A test asserts the limit so it cannot be
+rediscovered as a bug.
+
+**MySQL and MariaDB have nothing equivalent.** Migration 0005 exists there as a
+no-op that says so, keeping both dialects at the same version numbers.

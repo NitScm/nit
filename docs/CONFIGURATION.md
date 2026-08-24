@@ -250,6 +250,57 @@ Everything the application does behaves identically across the three. That is
 not an assertion of intent: `pkg/store/storetest` is one suite, and it runs
 against each backend in CI.
 
+##### Row-level security, and the role it needs (PostgreSQL)
+
+Every query filters on the tenant, and every one of them is correct. Migration
+0005 adds the second layer for the day one of them is not: policies that make a
+query with no tenant stamped on its connection return **nothing** rather than
+somebody else's rows.
+
+**It does nothing at all unless nit connects as the right kind of role.** A
+superuser bypasses row-level security entirely, and a table's owner bypasses it
+unless the table is forced — so a deployment can install every policy, see
+nothing break, and be protected by none of them. `nitd` therefore reports on
+start-up which situation it is in:
+
+```
+row-level security is enforced for this connection
+row-level security is NOT enforced for this connection
+   reason=the role owns the tables or bypasses policies
+```
+
+The role it needs owns nothing and is nobody special:
+
+```sql
+-- Migrations run as an owner; the server does not.
+CREATE ROLE nit_app LOGIN PASSWORD 'secret';
+GRANT USAGE ON SCHEMA public TO nit_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO nit_app;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO nit_app;
+```
+
+:::caution[A worker cannot run under these policies]
+A worker drains one queue for every tenant: `Claim` takes the oldest
+dispatchable task, whoever it belongs to. There is no tenant to stamp, because
+finding out whose task it is *is* the query — so under row-level security a
+worker sees an empty queue and does nothing.
+
+Give the worker a role with `BYPASSRLS`. It is trusted infrastructure rather
+than a tenant, and it is the component that already holds the forge credential
+and writes to everybody's repositories.
+
+This is a real limit of the layer rather than a configuration mistake, and a
+test asserts it so it cannot be forgotten.
+:::
+
+**`sessions` has no policy, deliberately.** It is the table that resolves the
+tenant — authentication looks a token up before anyone knows whose it is — so a
+policy on it would make every login return zero rows. What protects it is
+unchanged: a token hash is 32 unguessable bytes under a unique constraint.
+
+**MySQL and MariaDB have no equivalent.** There, the tenant filter in each query
+is the only layer.
+
 ##### The grant MySQL and MariaDB need
 
 `TRUNCATE` requires the `DROP` privilege. Withholding it is what stops the

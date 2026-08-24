@@ -272,6 +272,8 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 			"poll", s.cfg.EventPollInterval)
 	}
 
+	s.reportRowSecurity(ctx)
+
 	s.deps.Log.Info("listening", "addr", s.cfg.Addr)
 
 	err := srv.ListenAndServe()
@@ -282,4 +284,43 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 	<-done
 
 	return err
+}
+
+// reportRowSecurity says whether the database is enforcing tenant isolation on
+// this connection.
+//
+// It is logged because the failure mode of row-level security is silence: a
+// superuser bypasses it entirely, and a table's owner bypasses it unless the
+// table is forced, so a deployment can install every policy, see nothing break,
+// and be protected by none of them. An operator who reads "not enforced" can
+// act; one who assumes it worked cannot.
+//
+// A backend that has no such mechanism says nothing at all, which is honest —
+// MySQL and MariaDB have none, and a line claiming otherwise would be worse
+// than the silence.
+func (s *Server) reportRowSecurity(ctx context.Context) {
+	reporter, ok := s.deps.Store.(interface {
+		RowSecurityEnforced(context.Context) (bool, error)
+	})
+	if !ok {
+		return
+	}
+
+	enforced, err := reporter.RowSecurityEnforced(ctx)
+	if err != nil {
+		s.deps.Log.Warn("could not determine whether row-level security applies", "error", err)
+		return
+	}
+
+	if enforced {
+		s.deps.Log.Info("row-level security is enforced for this connection")
+		return
+	}
+
+	// Not an error. A single-tenant deployment connecting as the owner is the
+	// ordinary case and nothing is wrong with it; what would be wrong is
+	// believing the second layer is there when it is not.
+	s.deps.Log.Info("row-level security is NOT enforced for this connection",
+		"reason", "the role owns the tables or bypasses policies",
+		"effect", "the tenant filter in each query is the only layer")
 }

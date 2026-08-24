@@ -34,7 +34,14 @@ type Store struct {
 
 // Open connects to PostgreSQL and verifies the connection.
 func Open(ctx context.Context, dsn string) (*Store, error) {
-	pool, err := pgxpool.New(ctx, dsn)
+	cfg, err := pgxpool.ParseConfig(dsn)
+	if err != nil {
+		return nil, fmt.Errorf("postgres: parse DSN: %w", err)
+	}
+
+	cfg.PrepareConn = prepareTenant
+
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("postgres: connect: %w", err)
 	}
@@ -75,6 +82,92 @@ var _ store.Store = (*Store)(nil)
 // ---------------------------------------------------------------------------
 // helpers
 // ---------------------------------------------------------------------------
+
+// tenantSetting is what the row-level security policies read.
+const tenantSetting = "nit.tenant"
+
+// prepareTenant stamps the connection with the tenant of the context about to
+// use it.
+//
+// This is the whole mechanism, and it is one hook rather than a change to forty
+// query methods. pgx calls it as a connection leaves the pool, with the caller's
+// context, so the setting always describes the request that is about to run —
+// and a connection handed to a different tenant next is re-stamped before it is
+// used.
+//
+// **A context with no tenant sets the empty string, deliberately.** The policies
+// compare against it, nothing equals it, and a caller that forgot reads nothing
+// instead of reading somebody else's rows. Failing closed is the only useful
+// direction here: an empty result is a bug that gets reported, and a
+// cross-tenant read is a bug that does not.
+//
+// Session-level rather than transaction-local, because most operations here are
+// single statements with no transaction to be local to. That is safe only
+// because every acquisition re-stamps: a stale value can never be *read*,
+// because it is overwritten before the connection is used.
+func prepareTenant(ctx context.Context, conn *pgx.Conn) (bool, error) {
+	tenant := store.TenantFrom(ctx)
+
+	if _, err := conn.Exec(ctx, "SELECT set_config($1, $2, false)",
+		tenantSetting, string(tenant)); err != nil {
+		// The connection is unusable for this purpose, so it is destroyed
+		// rather than handed out with whatever the last request left on it.
+		return false, err
+	}
+
+	return true, nil
+}
+
+// RowSecurityEnforced reports whether row-level security actually applies to
+// this connection.
+//
+// It exists because the failure mode of RLS is silence. A superuser bypasses it
+// entirely and a table's owner bypasses it unless the table is FORCEd, so a
+// deployment can enable every policy, see nothing break, and be protected by
+// none of them. Asking the database is the only way to know.
+func (s *Store) RowSecurityEnforced(ctx context.Context) (bool, error) {
+	var (
+		superuser bool
+		bypass    bool
+	)
+
+	err := s.pool.QueryRow(ctx, `
+		SELECT rolsuper, rolbypassrls FROM pg_roles WHERE rolname = current_user`).
+		Scan(&superuser, &bypass)
+	if err != nil {
+		return false, mapError(err)
+	}
+
+	if superuser || bypass {
+		return false, nil
+	}
+
+	// Owning a table bypasses its policies unless the table is forced, so both
+	// have to be true for the answer to be yes.
+	var enforced bool
+
+	err = s.pool.QueryRow(ctx, `
+		SELECT bool_and(relrowsecurity AND relforcerowsecurity)
+		FROM pg_class
+		WHERE relname = ANY($1) AND relkind = 'r'`, tenantScopedTables).Scan(&enforced)
+	if err != nil {
+		return false, mapError(err)
+	}
+
+	return enforced, nil
+}
+
+// tenantScopedTables are the tables a tenant's rows live in.
+//
+// sessions is deliberately absent. It is the table that *resolves* the tenant —
+// authentication looks a token up before anyone knows whose it is — so it
+// cannot be protected by the tenant without making authentication impossible.
+// What protects it is that a token hash is 32 unguessable bytes with a unique
+// constraint, which is the same thing that protects it today.
+var tenantScopedTables = []string{
+	"users", "workspaces", "repositories", "sync_points",
+	"tasks", "artifacts", "audit_log", "partition_leases",
+}
 
 // mapError translates driver errors into the store vocabulary. Callers branch
 // on store's sentinels; a pgx error leaking out would couple them to the

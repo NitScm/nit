@@ -13,6 +13,7 @@ import (
 
 	"github.com/NitScm/nit/internal/auth"
 	"github.com/NitScm/nit/pkg/protocol"
+	"github.com/NitScm/nit/pkg/store"
 )
 
 // maxRequestBody caps a JSON request body. Patches never travel this way — they
@@ -57,7 +58,18 @@ func (s *Server) authenticated(h handlerFunc) http.Handler {
 			return
 		}
 
-		if err := h(w, r.WithContext(auth.WithPrincipal(r.Context(), principal))); err != nil {
+		// Both, and in this order. The principal is what the handlers read;
+		// the tenant is what the *store* reads, because a backend enforcing
+		// row-level security stamps it on the connection before every query.
+		//
+		// Stamping it here rather than in each handler is the point: a handler
+		// that forgot would not read the wrong tenant's rows, it would read
+		// none — but only if something put it in the context to begin with,
+		// and this is the one place that knows.
+		ctx := auth.WithPrincipal(r.Context(), principal)
+		ctx = store.WithTenant(ctx, principal.Tenant)
+
+		if err := h(w, r.WithContext(ctx)); err != nil {
 			s.writeError(w, r, err)
 		}
 	})
