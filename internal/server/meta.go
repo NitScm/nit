@@ -58,7 +58,10 @@ func (s *Server) handleRepositories(w http.ResponseWriter, r *http.Request) erro
 		return err
 	}
 
-	current := s.deps.Policy.Current()
+	current, err := s.policyFor(ctx)
+	if err != nil {
+		return err
+	}
 
 	views := make([]RepositoryView, 0, len(repos))
 
@@ -190,10 +193,22 @@ type Health struct {
 //
 // It reports the policy version, which is what makes a rolling deploy
 // diagnosable — two replicas serving different bundles is otherwise invisible.
+//
+// The version reported is the *default tenant's*, and it is empty when there is
+// no such bundle. This endpoint is unauthenticated — a load balancer has no
+// token — so it cannot know whose policy to report, and a control plane serving
+// many tenants has no single answer to give. Reporting one tenant's version and
+// calling it "the" version would be worse than reporting none: it would make
+// two replicas look identical while serving different rules to everybody else.
 func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, Health{
+	health := Health{
 		Status:          "ok",
 		ProtocolVersion: protocol.Version,
-		PolicyVersion:   s.deps.Policy.Current().Version(),
-	})
+	}
+
+	if source, err := s.deps.Policy.For(r.Context(), policy.DefaultTenant); err == nil {
+		health.PolicyVersion = source.Current().Version()
+	}
+
+	writeJSON(w, http.StatusOK, health)
 }

@@ -21,7 +21,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/NitScm/nit/internal/policyloader"
 	"github.com/NitScm/nit/pkg/policy"
 	"github.com/NitScm/nit/pkg/store"
 )
@@ -122,13 +121,13 @@ type Clock func() time.Time
 type Service struct {
 	sessions store.SessionStore
 	users    store.UserStore
-	policy   policyloader.Source
+	policy   policy.Sources
 	tenant   policy.TenantID
 	now      Clock
 }
 
 // NewService wires an authentication service.
-func NewService(s store.Store, source policyloader.Source, tenant policy.TenantID, now Clock) *Service {
+func NewService(s store.Store, sources policy.Sources, tenant policy.TenantID, now Clock) *Service {
 	if now == nil {
 		now = func() time.Time { return time.Now().UTC() }
 	}
@@ -139,7 +138,7 @@ func NewService(s store.Store, source policyloader.Source, tenant policy.TenantI
 	return &Service{
 		sessions: s.Sessions(),
 		users:    s.Users(),
-		policy:   source,
+		policy:   sources,
 		tenant:   tenant,
 		now:      now,
 	}
@@ -232,7 +231,15 @@ func (s *Service) Authenticate(ctx context.Context, token string) (*Principal, e
 		return nil, ErrUserDisabled
 	}
 
-	current := s.policy.Current()
+	// The tenant's bundle, resolved after the session named the tenant. A
+	// single-tenant deployment hands back the same one every time; a hosted
+	// control plane hands back that customer's.
+	source, err := s.policy.For(ctx, session.TenantID)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %s", ErrUnknownSubject, session.TenantID)
+	}
+
+	current := source.Current()
 
 	subject, err := current.Subject(user.PolicyUserID)
 	if errors.Is(err, policy.ErrUnknownUser) {

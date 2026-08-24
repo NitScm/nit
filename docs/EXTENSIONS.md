@@ -53,6 +53,12 @@ hash of the files, and a composed bundle is no longer those files), then
 `policy.Compile`. Compile is not optional: it resolves group inclusion, rejects
 cycles, and refuses a rule naming a subject nobody declared.
 
+**Serving several tenants** uses `policy.Sources`, which maps a tenant to a
+`Source`. The seam above is unchanged: `Current` stays an atomic load, and
+finding *which* source answers is the separate, possibly expensive step.
+`policy.OneSource` adapts a single source for a deployment that has one bundle,
+which is every self-hosted one.
+
 `Current` is called on the request path, so it must be cheap and must not
 block. Implementations that fetch from elsewhere refresh in the background and
 serve the last good bundle meanwhile — which is what the directory loader

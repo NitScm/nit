@@ -320,7 +320,10 @@ type Stats struct {
 
 func (s *Server) handleAdminStats(w http.ResponseWriter, r *http.Request) error {
 	ctx := r.Context()
-	current := s.deps.Policy.Current()
+	current, err := s.policyFor(ctx)
+	if err != nil {
+		return err
+	}
 
 	stats := Stats{
 		PolicyVersion: current.Version(),
@@ -413,7 +416,12 @@ type PolicyRuleView struct {
 }
 
 func (s *Server) handleAdminPolicy(w http.ResponseWriter, r *http.Request) error {
-	current := s.deps.Policy.Current()
+	ctx := r.Context()
+
+	current, err := s.policyFor(ctx)
+	if err != nil {
+		return err
+	}
 
 	view := PolicyView{Version: current.Version()}
 

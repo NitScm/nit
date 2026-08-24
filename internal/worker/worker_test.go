@@ -192,7 +192,7 @@ func newHarnessWithPolicy(t *testing.T, p *policy.Policy) *harness {
 		Store:      h.store,
 		Blobs:      h.blobs,
 		Git:        gitx.NewExecGit(),
-		Policy:     policyloader.NewStatic(p),
+		Policy:     policy.OneSource{Source: policyloader.NewStatic(p)},
 		SyncTokens: h.signer,
 		Log:        slog.New(slog.NewTextHandler(io.Discard, nil)),
 		Now:        func() time.Time { return testNow },

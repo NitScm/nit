@@ -65,7 +65,10 @@ func (s *Server) handlePull(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 
-	current := s.deps.Policy.Current()
+	current, err := s.policyFor(ctx)
+	if err != nil {
+		return err
+	}
 
 	spec := taskspec.Pull{
 		RequestID:     req.RequestID,

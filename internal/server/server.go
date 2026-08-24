@@ -20,7 +20,6 @@ import (
 
 	"github.com/NitScm/nit/internal/auditlog"
 	"github.com/NitScm/nit/internal/auth"
-	"github.com/NitScm/nit/internal/policyloader"
 	"github.com/NitScm/nit/internal/queue"
 	"github.com/NitScm/nit/internal/synctoken"
 	"github.com/NitScm/nit/internal/taskevents"
@@ -104,7 +103,7 @@ type Deps struct {
 	Store      store.Store
 	Queue      *queue.Queue
 	Blobs      blob.Store
-	Policy     policyloader.Source
+	Policy     policy.Sources
 	Auth       *auth.Service
 	SyncTokens *synctoken.Signer
 	Log        *slog.Logger

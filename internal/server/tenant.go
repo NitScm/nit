@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"net/http"
 
 	"github.com/NitScm/nit/internal/auth"
 	"github.com/NitScm/nit/pkg/policy"
@@ -33,4 +34,25 @@ func tenantOf(ctx context.Context) policy.TenantID {
 	}
 
 	return policy.DefaultTenant
+}
+
+// policyFor returns the bundle in force for this request's tenant.
+//
+// One lookup per request rather than one bundle per process. A self-hosted
+// deployment hands back the same bundle every time — policy.OneSource — and a
+// hosted control plane hands back that customer's.
+//
+// An error here is a 503 rather than a denial. A tenant whose bundle cannot be
+// resolved has no rules, and no rules means deny everything, which sounds like
+// the safe direction until it means a paying customer locked out of their own
+// repositories because a file has a typo in it. Saying "the policy is
+// unavailable" is both truer and actionable.
+func (s *Server) policyFor(ctx context.Context) (*policy.Policy, error) {
+	source, err := s.deps.Policy.For(ctx, tenantOf(ctx))
+	if err != nil {
+		return nil, fail(http.StatusServiceUnavailable, "policy_unavailable",
+			"the policy bundle for this tenant could not be loaded")
+	}
+
+	return source.Current(), nil
 }

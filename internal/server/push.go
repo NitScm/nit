@@ -99,7 +99,10 @@ func (s *Server) handlePush(w http.ResponseWriter, r *http.Request) error {
 		mode = enforce.ModeStrip
 	}
 
-	current := s.deps.Policy.Current()
+	current, err := s.policyFor(ctx)
+	if err != nil {
+		return err
+	}
 
 	result, err := enforce.Push(set, enforce.Options{
 		Engine:  current,

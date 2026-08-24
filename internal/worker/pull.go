@@ -47,7 +47,10 @@ func (w *Worker) handlePull(ctx context.Context, task *store.Task) ([]byte, erro
 		return nil, err
 	}
 
-	current := w.deps.Policy.Current()
+	current, err := w.policyFor(ctx, task.TenantID)
+	if err != nil {
+		return nil, err
+	}
 
 	storeRepo, err := w.deps.Store.Repositories().ByPolicyID(ctx, w.cfg.Tenant, spec.Repository)
 	if err != nil {

@@ -54,7 +54,7 @@ func newHarness(t *testing.T) *harness {
 	}
 
 	h := &harness{store: s, user: user, clock: now}
-	h.service = auth.NewService(s, policyloader.NewStatic(compiled), policy.DefaultTenant,
+	h.service = auth.NewService(s, policy.OneSource{Source: policyloader.NewStatic(compiled)}, policy.DefaultTenant,
 		func() time.Time { return h.clock })
 
 	return h

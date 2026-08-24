@@ -1285,3 +1285,43 @@ rediscovered as a bug.
 
 **MySQL and MariaDB have nothing equivalent.** Migration 0005 exists there as a
 no-op that says so, keeping both dialects at the same version numbers.
+
+---
+
+## D46 — One bundle per tenant, behind a registry rather than a wider seam
+
+**Decision.** `policy.Sources` maps a tenant to its `Source`;
+`internal/policyloader.Registry` implements it over a directory of bundles; the
+server resolves per request and the worker per task. `policy.Source` is
+unchanged.
+
+**Why not put the tenant on `Source.Current`.** `Current` is on the request path
+and must be an atomic load, while *finding* a tenant's source may read a
+directory or fetch from elsewhere. Separating them keeps the cheap thing cheap —
+and leaves every existing implementation working, including the directory source
+in the commercial edition and anything written out of tree. A seam is a promise;
+widening it to add a capability nobody has asked for yet would break that
+promise for a feature that is not shipped.
+
+**A single-tenant deployment uses `policy.OneSource` and is unchanged.** It is
+not a degraded mode: one bundle for one tenant is the whole truth there, and a
+registry keeping N of them would be an empty abstraction.
+
+**A missing bundle is an error, never an empty one.** An empty bundle denies
+everything, which sounds like the safe direction until it means a paying
+customer locked out of their own repositories because a file has a typo. The
+server answers 503 "policy unavailable", the worker fails the task permanently,
+and both name the tenant.
+
+**The compatibility fallback is deliberately narrow.** `<root>/<tenant>`, with
+the *default* tenant falling back to `<root>` itself — because `policy.dir`
+points straight at a bundle in every deployment that exists today, and moving it
+would be a migration nobody asked for. Extending that fallback to every tenant
+would mean a missing bundle silently served somebody else's rules, which is the
+one mistake this layer exists to make impossible. A test pins both halves.
+
+**`/healthz` reports the default tenant's version, or none.** The endpoint is
+unauthenticated — a load balancer has no token — so it cannot know whose policy
+to report, and a control plane serving many tenants has no single answer.
+Reporting one tenant's version as "the" version would make two replicas look
+identical while serving different rules to everybody else.

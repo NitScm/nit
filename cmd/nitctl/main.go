@@ -389,7 +389,7 @@ func token(args []string) error {
 	}
 	defer st.Close()
 
-	service := auth.NewService(st, policyloader.NewStatic(compiled), policy.DefaultTenant, nil)
+	service := auth.NewService(st, policy.OneSource{Source: policyloader.NewStatic(compiled)}, policy.DefaultTenant, nil)
 
 	switch args[0] {
 	case "create":

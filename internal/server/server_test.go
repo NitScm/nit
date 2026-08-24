@@ -159,7 +159,7 @@ func newFixtureWith(t *testing.T, adminGroups []policy.GroupID, origins []string
 		t.Fatalf("NewSigner: %v", err)
 	}
 
-	authService := auth.NewService(f.store, source, policy.DefaultTenant,
+	authService := auth.NewService(f.store, policy.OneSource{Source: source}, policy.DefaultTenant,
 		func() time.Time { return testNow })
 
 	f.authService = authService
@@ -175,7 +175,7 @@ func newFixtureWith(t *testing.T, adminGroups []policy.GroupID, origins []string
 		Store:      f.store,
 		Queue:      f.queue,
 		Blobs:      f.blobs,
-		Policy:     source,
+		Policy:     policy.OneSource{Source: source},
 		Auth:       authService,
 		SyncTokens: f.signer,
 		Log:        slog.New(slog.NewTextHandler(io.Discard, nil)),

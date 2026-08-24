@@ -50,7 +50,7 @@ func TestTheTenantComesFromTheToken(t *testing.T) {
 	// A token issued into the second tenant. Issue is the operator's path and
 	// still takes the tenant it is provisioning; what must be resolved from the
 	// token is *authentication*.
-	service := auth.NewService(f.store, f.policySource, "globex", nil)
+	service := auth.NewService(f.store, policy.OneSource{Source: f.policySource}, "globex", nil)
 
 	token, _, err := service.Issue(ctx, other.ID, "globex laptop", time.Hour)
 	if err != nil {
@@ -103,7 +103,7 @@ func TestARequestSeesOnlyItsOwnTenantsRepositories(t *testing.T) {
 		t.Fatalf("upsert user: %v", err)
 	}
 
-	service := auth.NewService(f.store, f.policySource, "globex", nil)
+	service := auth.NewService(f.store, policy.OneSource{Source: f.policySource}, "globex", nil)
 
 	token, _, err := service.Issue(ctx, other.ID, "globex laptop", time.Hour)
 	if err != nil {

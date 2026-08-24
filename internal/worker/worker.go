@@ -24,7 +24,6 @@ import (
 
 	"github.com/NitScm/nit/internal/auditlog"
 	"github.com/NitScm/nit/internal/gitcache"
-	"github.com/NitScm/nit/internal/policyloader"
 	"github.com/NitScm/nit/internal/pullcache"
 	"github.com/NitScm/nit/internal/synctoken"
 	"github.com/NitScm/nit/pkg/audit"
@@ -95,7 +94,7 @@ type Deps struct {
 	Blobs      blob.Store
 	Git        gitx.Git
 	Forges     *forge.Registry
-	Policy     policyloader.Source
+	Policy     policy.Sources
 	SyncTokens *synctoken.Signer
 	Log        *slog.Logger
 	Now        func() time.Time
@@ -177,6 +176,8 @@ func New(cfg Config, deps Deps) (*Worker, error) {
 // Handle executes a task and returns its marshalled result. It is the
 // queue.Handler of this package.
 func (w *Worker) Handle(ctx context.Context, task *store.Task) ([]byte, error) {
+	ctx = taskContext(ctx, task)
+
 	switch task.Kind {
 	case protocol.TaskPush:
 		return w.handlePush(ctx, task)
@@ -244,4 +245,45 @@ func loadSpec[T any](task *store.Task) (T, error) {
 // an answer that is not going to change.
 func permanent(code, format string, args ...any) error {
 	return &protocol.Error{Code: code, Message: fmt.Sprintf(format, args...)}
+}
+
+// policyFor returns the bundle in force for the tenant of a task.
+//
+// A worker drains one queue for every tenant, so the bundle it must evaluate
+// against belongs to the task, not to the process. A single-tenant deployment
+// hands back the same one every time.
+func (w *Worker) policyFor(ctx context.Context, tenant policy.TenantID) (*policy.Policy, error) {
+	if tenant == "" {
+		tenant = w.cfg.Tenant
+	}
+
+	source, err := w.deps.Policy.For(ctx, tenant)
+	if err != nil {
+		// Permanent: retrying a task whose tenant has no bundle will fail the
+		// same way every time, and burning its attempt budget hides the cause
+		// behind a generic exhaustion error.
+		return nil, permanent("policy_unavailable",
+			"no policy bundle for tenant %s", tenant)
+	}
+
+	return source.Current(), nil
+}
+
+// taskContext stamps a task's tenant on the context the handlers will use.
+//
+// A worker takes tasks of every tenant, so the tenant of the work is a property
+// of the task rather than of the process. It has to reach the store, not just
+// the query arguments: a backend enforcing row-level security reads it off the
+// connection, so a worker that skipped this would see an empty database and
+// quietly do nothing.
+//
+// A task with no tenant is left alone rather than defaulted. Every task has
+// one; a task that does not is a bug upstream, and inventing a tenant here
+// would run it against somebody's data rather than failing.
+func taskContext(ctx context.Context, task *store.Task) context.Context {
+	if task == nil || task.TenantID == "" {
+		return ctx
+	}
+
+	return store.WithTenant(ctx, task.TenantID)
 }

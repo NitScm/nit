@@ -184,7 +184,7 @@ func newStack(t *testing.T) *stack {
 
 	s.queue = queue.New(s.store.Tasks(), queue.Options{})
 
-	authService := auth.NewService(s.store, source, policy.DefaultTenant, nil)
+	authService := auth.NewService(s.store, policy.OneSource{Source: source}, policy.DefaultTenant, nil)
 
 	srv, err := server.New(server.Config{
 		Tenant:            policy.DefaultTenant,
@@ -194,7 +194,7 @@ func newStack(t *testing.T) *stack {
 		Store:      s.store,
 		Queue:      s.queue,
 		Blobs:      s.blobs,
-		Policy:     source,
+		Policy:     policy.OneSource{Source: source},
 		Auth:       authService,
 		SyncTokens: signer,
 		Log:        quiet,
@@ -213,7 +213,7 @@ func newStack(t *testing.T) *stack {
 		Store:      s.store,
 		Blobs:      s.blobs,
 		Git:        gitx.NewExecGit(),
-		Policy:     source,
+		Policy:     policy.OneSource{Source: source},
 		SyncTokens: signer,
 		Log:        quiet,
 	})
