@@ -522,6 +522,18 @@ func (s *auditStore) Query(ctx context.Context, q store.AuditQuery) ([]*store.Au
 		where = append(where, "occurred_at <= ?")
 		args = append(args, q.Until.UTC())
 	}
+	if q.AfterID > 0 {
+		where = append(where, "id > ?")
+		args = append(args, q.AfterID)
+	}
+
+	// The order is part of the contract rather than an incidental: newest first
+	// is the log view, oldest first is what a replay walks. Interpolated from a
+	// closed set of two literals, never from anything a caller supplies.
+	order := "DESC"
+	if q.Oldest {
+		order = "ASC"
+	}
 
 	args = append(args, limit)
 
@@ -529,7 +541,7 @@ func (s *auditStore) Query(ctx context.Context, q store.AuditQuery) ([]*store.Au
 		SELECT `+auditColumns+`
 		FROM audit_log
 		WHERE `+strings.Join(where, " AND ")+`
-		ORDER BY id DESC
+		ORDER BY id `+order+`
 		LIMIT ?`, args...)
 	if err != nil {
 		return nil, mapError(err)

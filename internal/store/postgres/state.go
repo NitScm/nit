@@ -328,6 +328,13 @@ func (s *auditStore) Query(ctx context.Context, q store.AuditQuery) ([]*store.Au
 		limit = 100
 	}
 
+	// The order is part of the contract rather than an incidental: newest first
+	// is the log view, oldest first is what a replay walks.
+	order := "DESC"
+	if q.Oldest {
+		order = "ASC"
+	}
+
 	rows, err := s.pool.Query(ctx, `
 		SELECT `+auditColumns+`
 		FROM audit_log
@@ -337,14 +344,16 @@ func (s *auditStore) Query(ctx context.Context, q store.AuditQuery) ([]*store.Au
 		  AND ($4 = '' OR request_id = $4)
 		  AND ($5::timestamptz IS NULL OR occurred_at >= $5)
 		  AND ($6::timestamptz IS NULL OR occurred_at <= $6)
-		ORDER BY id DESC
-		LIMIT $7`,
+		  AND ($7 = 0 OR id > $7)
+		ORDER BY id `+order+`
+		LIMIT $8`,
 		string(q.Tenant),
 		nullableID(q.ActorUserID),
 		nullableID(q.RepositoryID),
 		q.RequestID,
 		nullableTime(q.Since),
 		nullableTime(q.Until),
+		q.AfterID,
 		limit)
 	if err != nil {
 		return nil, mapError(err)

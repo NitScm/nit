@@ -45,6 +45,7 @@ func Run(t *testing.T, newStore Factory) {
 	t.Run("ArtifactDeduplication", func(t *testing.T) { testArtifactDeduplication(t, newStore) })
 	t.Run("ArtifactExpiry", func(t *testing.T) { testArtifactExpiry(t, newStore) })
 	t.Run("AuditAppendAndQuery", func(t *testing.T) { testAuditAppendAndQuery(t, newStore) })
+	t.Run("AuditPagesForwardWithoutGapsOrRepeats", func(t *testing.T) { testAuditCursor(t, newStore) })
 	t.Run("ConcurrentClaims", func(t *testing.T) { testConcurrentClaims(t, newStore) })
 	t.Run("ConcurrentDrain", func(t *testing.T) { testConcurrentDrain(t, newStore) })
 	t.Run("CompletionCannotPrecedeStart", func(t *testing.T) { testCompletionCannotPrecedeStart(t, newStore) })
@@ -889,6 +890,124 @@ func testAuditAppendAndQuery(t *testing.T, newStore Factory) {
 	}
 	if got[1].RuleID != "secrets-are-platform-only" {
 		t.Errorf("rule attribution lost: %q", got[1].RuleID)
+	}
+}
+
+// Replaying an export gap means walking the trail in the order it was written,
+// in pages, and landing on every record exactly once. A timestamp cannot page:
+// two records can share one, so a window that re-reads from the last timestamp
+// either repeats a record or skips one. The id cursor is what makes it exact.
+//
+// This is also where the three backends have to agree on an ordering that was
+// previously incidental. One that returned pages in a different order would not
+// fail visibly — it would produce a replay that silently skipped records, which
+// is the failure an audit trail exists to not have.
+func testAuditCursor(t *testing.T, newStore Factory) {
+	f := setup(t, newStore)
+	ctx := context.Background()
+
+	const total = 25
+
+	records := make([]*store.AuditRecord, 0, total)
+	for i := range total {
+		records = append(records, &store.AuditRecord{
+			TenantID:      policy.DefaultTenant,
+			OccurredAt:    f.now, // Deliberately identical: paging must not lean on it.
+			ActorUserID:   f.user.ID,
+			ActorLabel:    "dev",
+			Action:        "push.accepted",
+			RepositoryID:  f.repo.ID,
+			Branch:        "main",
+			Path:          fmt.Sprintf("src/file-%02d.go", i),
+			Effect:        policy.EffectAllow,
+			PolicyVersion: "sha256:test",
+			RequestID:     "req-cursor",
+		})
+	}
+
+	if err := f.store.Audit().Append(ctx, records...); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+
+	// Oldest first is the replay order. Without it a caller would walk the
+	// trail backwards and reconstruct history in reverse.
+	first, err := f.store.Audit().Query(ctx, store.AuditQuery{
+		Tenant:    policy.DefaultTenant,
+		RequestID: "req-cursor",
+		Oldest:    true,
+		Limit:     1,
+	})
+	if err != nil {
+		t.Fatalf("Query: %v", err)
+	}
+	if len(first) != 1 {
+		t.Fatalf("got %d records, want 1", len(first))
+	}
+	if first[0].Path != "src/file-00.go" {
+		t.Errorf("first record = %q, want src/file-00.go: Oldest did not reverse the order",
+			first[0].Path)
+	}
+
+	// And the default is still newest first, which is the log view.
+	newest, err := f.store.Audit().Query(ctx, store.AuditQuery{
+		Tenant:    policy.DefaultTenant,
+		RequestID: "req-cursor",
+		Limit:     1,
+	})
+	if err != nil {
+		t.Fatalf("Query: %v", err)
+	}
+	if len(newest) != 1 || newest[0].Path != fmt.Sprintf("src/file-%02d.go", total-1) {
+		t.Errorf("the default order stopped being newest first: %v", newest)
+	}
+
+	// Now walk the whole trail in small pages, as a replay does.
+	var (
+		seen   []string
+		cursor int64
+		pages  int
+	)
+
+	for {
+		page, err := f.store.Audit().Query(ctx, store.AuditQuery{
+			Tenant:    policy.DefaultTenant,
+			RequestID: "req-cursor",
+			Oldest:    true,
+			AfterID:   cursor,
+			Limit:     4,
+		})
+		if err != nil {
+			t.Fatalf("Query page %d: %v", pages, err)
+		}
+
+		if len(page) == 0 {
+			break
+		}
+
+		pages++
+		if pages > total {
+			t.Fatalf("the walk did not terminate: %d pages for %d records", pages, total)
+		}
+
+		for _, record := range page {
+			if record.ID <= cursor {
+				t.Fatalf("AfterID=%d returned record %d: the cursor does not exclude what was already read",
+					cursor, record.ID)
+			}
+
+			seen = append(seen, record.Path)
+			cursor = record.ID
+		}
+	}
+
+	if len(seen) != total {
+		t.Fatalf("the walk saw %d records, want %d: %v", len(seen), total, seen)
+	}
+
+	for i, path := range seen {
+		if want := fmt.Sprintf("src/file-%02d.go", i); path != want {
+			t.Fatalf("record %d is %q, want %q: paging lost the write order", i, path, want)
+		}
 	}
 }
 

@@ -1402,3 +1402,43 @@ because delivery is now the assembly's job and none of it helps if what arrives
 is not what was decided: a sink that drops an empty `RuleID` loses exactly the
 default-deny records, which are the ones nobody wrote a rule for and the ones
 worth reading.
+
+## D49 — Filling an export gap is an operator command over a settled window
+
+**Decision.** `AuditQuery` gains `AfterID` (a row-id cursor) and `Oldest`
+(ascending), documented as part of the contract and asserted by `storetest`
+against all three backends. `nitctl audit export` walks a window with them and
+writes decision records to stdout as JSON Lines, in the shape a sink receives
+them. `audit.Record` gains stable snake_case JSON tags, and omits no field.
+
+**Why this exists.** D48 left a hole it named: records dropped at the edge of an
+outage are in the database and nowhere else. A sink is never the only copy —
+that has been the rule since the seam was written — and the rule is worth
+nothing without a way to get the other copy out.
+
+**Why a cursor rather than a timestamp.** Two records can share a timestamp, so
+a caller re-reading from the last one either repeats a record or skips one.
+Neither is acceptable in an audit trail, and which one you get depends on how
+busy the deployment was.
+
+**Why a settled window, and why the command refuses one that is not.** Ids are
+handed out at insert and become visible at commit, so a transaction that started
+earlier and committed later carries a lower id than one already returned. A
+reader that treats the highest id right now as "everything so far" misses it.
+Over a window that ended a minute ago there is no such row. `-until` defaults to
+now minus `-settle`, and a later `-until` is refused rather than served: an
+export that looks complete and is not is worse than one that will not run.
+
+**Why stdout rather than a sink.** A sink is compiled into a deployment's own
+binary through `nitd.Deps.AuditSink`; `nitctl` has none and cannot have one
+without inventing a plugin mechanism. JSON Lines feeds a curl into a SIEM, a
+file on an object store, or `jq`, and costs nothing to consume.
+
+**Why the cursor goes to stderr.** stdout is the export. Putting a database row
+id in it would hand a destination the one thing a record deliberately does not
+carry — the invitation to join on a primary key that means nothing outside this
+deployment.
+
+**What this is still not.** A tail that follows the writer. That needs export
+state the deployment keeps — where a destination got to — which is a table, a
+migration and a process, and it belongs where the schema is ours to extend.

@@ -229,6 +229,11 @@ type ArtifactStore interface {
 }
 
 // AuditQuery selects audit records.
+//
+// Records come back newest first, which is what an operator expects from a log
+// view. Oldest reverses that, and AfterID pages forward through the trail in
+// the order it was written — the shape a replay needs, and the reason both
+// exist.
 type AuditQuery struct {
 	Tenant       policy.TenantID
 	ActorUserID  ID
@@ -236,6 +241,22 @@ type AuditQuery struct {
 	RequestID    string
 	Since        time.Time
 	Until        time.Time
+
+	// AfterID returns only records with a greater id, so a caller can walk a
+	// window in pages without a row appearing twice or being skipped between
+	// them. A timestamp cannot do this: two records can share one.
+	//
+	// The caveat, because it decides what this may be used for: ids are handed
+	// out at insert and become visible at commit, so a transaction that started
+	// earlier and committed later carries a lower id than one already returned.
+	// A caller that pages to the end of the table and treats the last id as
+	// "everything up to now" can miss such a row. This is why replay is an
+	// operator command over a window that has already settled, rather than a
+	// tail that follows the writer.
+	AfterID int64
+
+	// Oldest orders by id ascending instead of descending.
+	Oldest bool
 
 	Limit int
 }

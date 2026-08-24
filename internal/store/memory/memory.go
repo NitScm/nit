@@ -498,14 +498,23 @@ func (s *auditStore) Query(_ context.Context, q store.AuditQuery) ([]*store.Audi
 			continue
 		case !q.Until.IsZero() && r.OccurredAt.After(q.Until):
 			continue
+		case q.AfterID > 0 && r.ID <= q.AfterID:
+			continue
 		}
 
 		clone := *r
 		out = append(out, &clone)
 	}
 
-	// Newest first, matching what an operator expects from a log view.
-	sort.Slice(out, func(i, j int) bool { return out[i].ID > out[j].ID })
+	// Newest first, matching what an operator expects from a log view. Oldest
+	// is what a replay asks for: the order the records were written.
+	sort.Slice(out, func(i, j int) bool {
+		if q.Oldest {
+			return out[i].ID < out[j].ID
+		}
+
+		return out[i].ID > out[j].ID
+	})
 
 	if q.Limit > 0 && len(out) > q.Limit {
 		out = out[:q.Limit]

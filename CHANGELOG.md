@@ -43,6 +43,11 @@ from.
   request path with a context of its own — a developer cancelling their push no
   longer cancels the export of the decision already made about it. Drops at a
   full queue are counted, and the database still holds every record.
+- **`pkg/store`** — `AuditQuery` pages forward with `AfterID` and `Oldest`, an
+  ordering the three backends are now held to by `storetest` rather than
+  agreeing on by accident. `nitctl audit export` walks a settled window with it
+  and writes decision records as JSON Lines, which is how a deployment fills the
+  gap left by a destination that was unreachable.
 
 ### The system (`internal/`, `cmd/`)
 

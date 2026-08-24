@@ -45,45 +45,52 @@ import (
 // It is deliberately a value type with no store identifiers: a Sink writes
 // somewhere that has never heard of this database, and giving it primary keys
 // would invite it to join on them.
+//
+// The JSON tags are part of the contract, not a convenience. `nitctl audit
+// export` writes these records to stdout as JSON Lines, and a destination
+// taught to read that shape must keep reading it after an upgrade. No field is
+// omitted when empty: an absent rule_id and an empty one would be read as the
+// same thing by a consumer, and they are not — an empty one is the default deny
+// that nobody wrote a rule for.
 type Record struct {
 	// OccurredAt is a time, not a formatted string: how a destination wants it
 	// rendered is the sink's business, and baking one format in here would make
 	// every sink that wants another one parse it back.
-	OccurredAt time.Time
+	OccurredAt time.Time `json:"occurred_at"`
 
 	// Actor is the bundle identity that acted — the stable key, not a display
 	// name. Names and addresses collide and change.
-	Actor string
+	Actor string `json:"actor"`
 
 	// Action is the stable identifier a consumer branches on: push.accepted,
 	// push.denied_path, pull.delivered, and so on.
-	Action string
+	Action string `json:"action"`
 
 	// Repository is the bundle identity, supplied by the caller — never the
 	// database row id. A sink writes somewhere that has never heard of this
 	// database, and handing it a primary key invites it to join on one.
-	Repository string
-	Branch     string
+	Repository string `json:"repository"`
+	Branch     string `json:"branch"`
 
 	// Path is set on a per-path decision and empty otherwise.
-	Path string
+	Path string `json:"path"`
 
 	// Effect, Reason, RuleID and Guard say what decided it. RuleID is empty
 	// when nothing matched and the default deny applied, which is a policy gap
 	// rather than a refusal anyone wrote.
-	Effect string
-	Reason string
-	RuleID string
-	Guard  string
+	Effect string `json:"effect"`
+	Reason string `json:"reason"`
+	RuleID string `json:"rule_id"`
+	Guard  string `json:"guard"`
 
 	// PolicyVersion is the bundle in force when the decision was made, so a
 	// past decision can be replayed against exactly the rules that produced it.
-	PolicyVersion string
+	PolicyVersion string `json:"policy_version"`
 
 	// RequestID follows one operation end to end; TaskID names the task it
 	// became, when it became one.
-	RequestID string
-	TaskID    string
+	RequestID string `json:"request_id"`
+	TaskID    string `json:"task_id"`
 }
 
 // Sink receives decision records.

@@ -42,10 +42,16 @@ Usage:
   nitctl tasks           [-state S] [-kind K] [-repository R] [-limit N] [-json]
   nitctl audit           [-user U] [-repository R] [-request ID] [-since 24h] [-json]
   nitctl audit prune     -before YYYY-MM-DD | -keep-days N [-batch 1000] [-yes]
+  nitctl audit export    -since 24h [-until T] [-after-id N] [-tenant T]
   nitctl admins list|set [-tenant T] [-groups a,b]
 
-Server-side commands (migrate, token, audit prune) read the same configuration
-nitd reads. Point them at a file with -config, or set NIT_CONFIG.
+Server-side commands (migrate, token, audit prune, audit export) read the same
+configuration nitd reads. Point them at a file with -config, or set NIT_CONFIG.
+
+"audit export" writes decision records to stdout as JSON Lines, in the shape an
+audit.Sink receives them. It is how a deployment fills an export gap: a sink is
+never the only copy, and the database is the one that has what a destination
+missed while it was unreachable.
   nitctl version
 
 Commands:
@@ -104,6 +110,13 @@ func run(args []string) error {
 	// through it.
 	if args[0] == "audit" && len(args) > 1 && args[1] == "prune" {
 		return auditPrune(args[2:])
+	}
+
+	// So is export, and for a related reason: it exists to fill a gap left by a
+	// destination that was unreachable, and the database is the copy that has
+	// what the destination missed.
+	if args[0] == "audit" && len(args) > 1 && args[1] == "export" {
+		return auditExport(args[2:])
 	}
 
 	// The operations commands read the API rather than the database, so nitctl
