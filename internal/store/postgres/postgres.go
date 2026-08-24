@@ -70,6 +70,7 @@ func (s *Store) SyncPoints() store.SyncPointStore    { return &syncPointStore{s.
 func (s *Store) Tasks() store.TaskStore              { return &taskStore{s.pool} }
 func (s *Store) Artifacts() store.ArtifactStore      { return &artifactStore{s.pool} }
 func (s *Store) Audit() store.AuditStore             { return &auditStore{s.pool} }
+func (s *Store) Tenants() store.TenantStore          { return &tenantStore{s.pool} }
 
 // Close releases the pool.
 func (s *Store) Close() error {

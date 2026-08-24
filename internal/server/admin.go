@@ -29,7 +29,7 @@ func (s *Server) adminOnly(h handlerFunc) http.Handler {
 	return s.authenticated(func(w http.ResponseWriter, r *http.Request) error {
 		principal := auth.PrincipalFrom(r.Context())
 
-		if !s.isAdmin(principal) {
+		if !s.isAdmin(r.Context(), principal) {
 			// 404 rather than 403: the existence of an operations API is not
 			// something an ordinary developer needs confirmed.
 			return fail(http.StatusNotFound, "not_found", "not found")
@@ -39,8 +39,34 @@ func (s *Server) adminOnly(h handlerFunc) http.Handler {
 	})
 }
 
-func (s *Server) isAdmin(principal *auth.Principal) bool {
-	for _, group := range s.cfg.AdminGroups {
+// isAdmin decides whether a caller may read the operations API of their tenant.
+//
+// The list is the tenant's own when the control plane holds one, and the
+// deployment-wide `server.admin_groups` when it does not. A self-hosted
+// deployment never writes those rows and behaves exactly as it always has; a
+// hosted one writes them and stops granting one customer's administrators
+// access to another's operations API.
+//
+// The list stays outside the customer's policy bundle either way. D28: the
+// console is the tool for diagnosing a broken bundle, so the permission to use
+// it cannot live in the thing it exists to debug. Scoping it to a tenant does
+// not change that — the group *names* come from their bundle, because that is
+// where groups are defined; which of those names may operate is ours.
+//
+// A lookup failure falls back to the configured list rather than denying. The
+// alternative locks every operator out of the tool they would use to find out
+// why the database is unhappy, at the moment they need it.
+func (s *Server) isAdmin(ctx context.Context, principal *auth.Principal) bool {
+	groups := s.cfg.AdminGroups
+
+	if scoped, err := s.deps.Store.Tenants().AdminGroups(ctx, tenantOf(ctx)); err != nil {
+		s.deps.Log.Warn("could not read the tenant's operator list, falling back to configuration",
+			"tenant", tenantOf(ctx), "error", err)
+	} else if len(scoped) > 0 {
+		groups = scoped
+	}
+
+	for _, group := range groups {
 		if principal.Subject.InGroup(group) {
 			return true
 		}

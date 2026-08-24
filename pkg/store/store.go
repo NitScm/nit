@@ -42,6 +42,7 @@ type Store interface {
 	Tasks() TaskStore
 	Artifacts() ArtifactStore
 	Audit() AuditStore
+	Tenants() TenantStore
 
 	// Close releases the underlying resources.
 	Close() error
@@ -237,6 +238,27 @@ type AuditQuery struct {
 	Until        time.Time
 
 	Limit int
+}
+
+// TenantStore holds what the control plane knows about a tenant, as opposed to
+// what the tenant's policy bundle says.
+//
+// The distinction is the point. A bundle is the customer's, under their version
+// control, and it decides who may read which files. This is ours, and it decides
+// who may operate the deployment — which has to stay outside the bundle, or the
+// console for diagnosing a broken bundle would depend on that bundle (D28).
+type TenantStore interface {
+	// AdminGroups returns the groups whose members may read the operations API
+	// for a tenant.
+	//
+	// Empty is not "nobody": it means nothing has been configured for this
+	// tenant, and the caller falls back to the deployment-wide list. A hosted
+	// control plane sets rows here; a self-hosted one never does and keeps the
+	// behaviour it has always had.
+	AdminGroups(ctx context.Context, tenant policy.TenantID) ([]policy.GroupID, error)
+
+	// SetAdminGroups replaces the list for a tenant.
+	SetAdminGroups(ctx context.Context, tenant policy.TenantID, groups []policy.GroupID) error
 }
 
 // AuditStore appends to the audit log.

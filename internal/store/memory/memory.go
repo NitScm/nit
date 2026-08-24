@@ -39,6 +39,10 @@ type Store struct {
 	artifacts  map[store.ID]*store.Artifact
 	audit      []*store.AuditRecord
 
+	// adminGroups is what the control plane knows about a tenant, as opposed
+	// to what that tenant's bundle says.
+	adminGroups map[policy.TenantID][]policy.GroupID
+
 	auditSeq int64
 }
 
@@ -69,6 +73,7 @@ func (s *Store) SyncPoints() store.SyncPointStore    { return (*syncPointStore)(
 func (s *Store) Tasks() store.TaskStore              { return (*taskStore)(s) }
 func (s *Store) Artifacts() store.ArtifactStore      { return (*artifactStore)(s) }
 func (s *Store) Audit() store.AuditStore             { return (*auditStore)(s) }
+func (s *Store) Tenants() store.TenantStore          { return (*tenantStore)(s) }
 func (s *Store) Close() error                        { return nil }
 
 func (s *Store) nextID(prefix string) store.ID {

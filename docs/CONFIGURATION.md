@@ -576,10 +576,24 @@ nitctl token revoke -id <session-id>
 
 nitctl audit prune -keep-days 365           # counts what would go, deletes nothing
 nitctl audit prune -keep-days 365 -yes      # deletes, in batches
+
+nitctl admins list                          # who may operate this tenant
+nitctl admins set -groups platform,sre      # replaces the list
 ```
 
 They read `NIT_DATABASE_URL` and `NIT_POLICY_DIR` from the environment, or take
 `-dsn` and `-policy`.
+
+`admins` decides who may read the operations API **for one tenant**, overriding
+the deployment-wide `server.admin_groups`. With no rows set — every self-hosted
+deployment — the configured list decides and nothing changes.
+
+It is a database command rather than an API one for the same reason `migrate`
+is: it decides who may use the operations API, so putting it behind that API
+would leave an operator who locked themselves out unable to get back in. And the
+list stays outside the customer's policy bundle, because the console is the tool
+for diagnosing a broken bundle and its permission cannot live in the thing it
+exists to debug.
 
 `audit prune` is the only way to remove audit records, and it is here rather
 than among the operations commands on purpose: the server holds a `store.Store`

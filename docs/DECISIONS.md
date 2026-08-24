@@ -1325,3 +1325,40 @@ unauthenticated — a load balancer has no token — so it cannot know whose pol
 to report, and a control plane serving many tenants has no single answer.
 Reporting one tenant's version as "the" version would make two replicas look
 identical while serving different rules to everybody else.
+
+---
+
+## D47 — Operators are scoped per tenant, and still not in the bundle
+
+**Decision.** `tenant_admin_groups` holds, per tenant, the groups whose members
+may read the operations API. A tenant with no rows falls back to the
+deployment-wide `server.admin_groups`, which is every self-hosted deployment.
+`nitctl admins list|set` manages it.
+
+**Why not move it into the policy bundle.** D28 decided this is configuration
+rather than policy for a reason that has not changed: the console is the tool
+for diagnosing a broken bundle, so putting the permission to use it inside the
+bundle would make that tool depend on the thing it exists to debug. Scoping the
+list to a tenant does not touch that — the group *names* still come from their
+bundle, because that is where groups are defined, but which of those names may
+operate is held by the control plane.
+
+**Why a database command rather than an endpoint.** It decides who may use the
+operations API. Behind that API, an operator who removed their own group would
+have no way back in.
+
+**Replace, not merge.** Writing the list means *this is the list*. A merge would
+make removing an administrator take a second command that nobody would remember
+to run, which is how a departed employee keeps access.
+
+**A read failure falls back rather than denying.** If the lookup errors, the
+configured list decides and a warning is logged. Denying would lock every
+operator out of the tool they would use to find out why the database is unhappy,
+at exactly the moment they need it.
+
+**What this is not.** `saas-thinking/03` gap 3 asks for "a customer account,
+distinct from a policy user" — roles, invitations, ownership, an identity model
+of our own. That is a product, and it is gap 7. This is the narrow half that
+stops a hosted control plane granting one customer's administrators access to
+another's operations API, and it is the last of the eight gaps that was shaped
+like code rather than like a product.

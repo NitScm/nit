@@ -87,6 +87,7 @@ func (s *Store) SyncPoints() store.SyncPointStore    { return &syncPointStore{s.
 func (s *Store) Tasks() store.TaskStore              { return &taskStore{s.db} }
 func (s *Store) Artifacts() store.ArtifactStore      { return &artifactStore{s.db} }
 func (s *Store) Audit() store.AuditStore             { return &auditStore{s.db} }
+func (s *Store) Tenants() store.TenantStore          { return &tenantStore{s.db} }
 
 // Close releases the handle.
 func (s *Store) Close() error { return s.db.Close() }

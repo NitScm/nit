@@ -42,6 +42,7 @@ Usage:
   nitctl tasks           [-state S] [-kind K] [-repository R] [-limit N] [-json]
   nitctl audit           [-user U] [-repository R] [-request ID] [-since 24h] [-json]
   nitctl audit prune     -before YYYY-MM-DD | -keep-days N [-batch 1000] [-yes]
+  nitctl admins list|set [-tenant T] [-groups a,b]
 
 Server-side commands (migrate, token, audit prune) read the same configuration
 nitd reads. Point them at a file with -config, or set NIT_CONFIG.
@@ -91,6 +92,10 @@ func run(args []string) error {
 
 	if args[0] == "token" {
 		return token(args[1:])
+	}
+
+	if args[0] == "admins" {
+		return admins(args[1:])
 	}
 
 	// Retention is not an operations read. It goes to the database with the
