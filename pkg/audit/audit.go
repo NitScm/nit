@@ -15,6 +15,22 @@
 //     that silently became the sole record would put the audit trail behind
 //     somebody else's availability.
 //
+// # What a Sink does not have to do
+//
+// Buffer. This package used to make "an implementation that talks to a network
+// buffers and returns" the implementer's obligation, which meant the same queue
+// written once per destination and losing records differently each time. The
+// assembly does it now: pkg/nitd puts a bounded queue in front of whatever
+// sink it is handed, so Emit is called from a background goroutine, in batches,
+// with a context of its own — never the request's, because a developer
+// cancelling their push must not also cancel the record of what was decided
+// before they did.
+//
+// So a Sink can be what it should be: a client that speaks one protocol.
+// Blocking in Emit is fine. What is not fine is keeping the slice it was handed,
+// or not being safe to call from several goroutines. pkg/audit/audittest is the
+// suite that says so, and pkg/audit.Memory is a working sink to test against.
+//
 // See docs/EXTENSIONS.md.
 package audit
 
@@ -72,9 +88,13 @@ type Record struct {
 
 // Sink receives decision records.
 type Sink interface {
-	// Emit is called after the records have been persisted. It must not block
-	// the request path for long: an implementation that talks to a network
-	// buffers and returns.
+	// Emit is called after the records have been persisted, from a background
+	// goroutine, with a context that is not the request's. Taking a moment is
+	// expected; a destination that is down costs a push nothing.
+	//
+	// It must not retain records — the caller is free to reuse the slice — and
+	// it must be safe to call concurrently. An empty batch is a no-op, not an
+	// error.
 	Emit(ctx context.Context, records ...Record) error
 }
 

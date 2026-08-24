@@ -45,6 +45,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/NitScm/nit/internal/auditbuf"
 	"github.com/NitScm/nit/internal/auth"
 	"github.com/NitScm/nit/internal/blob/filesystem"
 	"github.com/NitScm/nit/internal/bootstrap"
@@ -196,7 +197,7 @@ func Serve(ctx context.Context, cfg Config, deps Deps) error {
 		Auth:       auth.NewService(parts.store, policy.OneSource{Source: parts.policy}, policy.DefaultTenant, nil),
 		SyncTokens: signer,
 		Log:        parts.log,
-		AuditSink:  deps.AuditSink,
+		AuditSink:  parts.auditSink,
 	})
 	if err != nil {
 		return err
@@ -285,7 +286,7 @@ func Work(ctx context.Context, cfg Config, opts WorkerOptions, deps WorkerDeps) 
 		Policy:     policy.OneSource{Source: parts.policy},
 		SyncTokens: signer,
 		Log:        parts.log,
-		AuditSink:  deps.AuditSink,
+		AuditSink:  parts.auditSink,
 		Now:        deps.Now,
 		PullCache:  deps.PullCache,
 	})
@@ -345,6 +346,10 @@ type parts struct {
 	policy policy.Source
 	log    *slog.Logger
 
+	// auditSink is what a caller supplied, with a queue in front of it. Nil
+	// when nothing was supplied, which stays the ordinary case.
+	auditSink audit.Sink
+
 	// loader is set only when this package created the policy source, and is
 	// what decides whether a watcher runs.
 	loader *policyloader.Loader
@@ -363,6 +368,18 @@ func open(ctx context.Context, cfg Config, deps Deps) (*parts, error) {
 
 	if p.log == nil {
 		p.log = bootstrap.NewLogger(cfg.LogLevel)
+	}
+
+	// A sink is exported to, not consulted, so it has no business on the
+	// request path. Buffering here rather than asking every implementation to
+	// do it is what lets a sink be a client that speaks one protocol: pkg/audit
+	// used to make "buffers and returns" the implementer's obligation, and an
+	// obligation met once per destination is met differently once per
+	// destination. New returns nil for a nil sink, so no export configured
+	// stays the absence of a sink.
+	if buffered := auditbuf.New(deps.AuditSink, auditbuf.Options{Log: p.log}); buffered != nil {
+		p.auditSink = buffered
+		p.closers = append(p.closers, func() { buffered.Close() })
 	}
 
 	if p.store == nil {

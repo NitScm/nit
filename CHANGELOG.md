@@ -36,6 +36,13 @@ from.
   submodules.
 - **`pkg/gitx`**, **`pkg/forge`**, **`pkg/protocol`** — git execution, hosting
   drivers (HTTPS with a token, SSH with a key, local paths), and the wire types.
+- **`pkg/audit`** — where a decision goes after it is made. `audit.Memory` is a
+  working sink to test against, and `pkg/audit/audittest` is the conformance
+  suite an implementation runs. A sink no longer has to buffer: `pkg/nitd` puts
+  a bounded queue in front of whatever it is handed, so `Emit` runs off the
+  request path with a context of its own — a developer cancelling their push no
+  longer cancels the export of the decision already made about it. Drops at a
+  full queue are counted, and the database still holds every record.
 
 ### The system (`internal/`, `cmd/`)
 

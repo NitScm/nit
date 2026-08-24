@@ -83,11 +83,44 @@ Two properties an implementation must preserve:
 failure, joining the errors. Stopping at the first would make the order of
 configuration decide which destinations receive a record.
 
-Set one on `server.Deps.AuditSink` or `worker.Deps.AuditSink`. Nil means
-persist only, which is the default. Records reach a sink with the bundle's
-repository identity rather than a database row id — a sink writes somewhere
-that has never heard of this database, and handing it a primary key invites it
-to join on one.
+Set one on `nitd.Deps.AuditSink`. Nil means persist only, which is the default.
+Records reach a sink with the bundle's repository identity rather than a
+database row id — a sink writes somewhere that has never heard of this
+database, and handing it a primary key invites it to join on one.
+
+**You do not have to buffer.** This used to be the implementer's obligation,
+which meant the same queue written once per destination, losing records
+differently each time. `pkg/nitd` now puts a bounded queue in front of whatever
+sink it is given, so `Emit` runs on a background goroutine, in batches, with a
+context of its own — never the request's, because a developer cancelling their
+push must not also cancel the record of what was decided before they did.
+Blocking in `Emit` is fine.
+
+What is not fine: keeping the slice you were handed (the caller reuses it), or
+not being safe to call from several goroutines.
+
+The queue is bounded, and a destination that stays unreachable fills it. Past
+that, records are dropped and counted rather than held at the cost of memory the
+server needs for work it can still do — which is sound only because the database
+holds every record either way. Closing the deployment flushes what was accepted.
+
+`pkg/audit/audittest` is the conformance suite; run it against your sink,
+imported rather than paraphrased. `pkg/audit.Memory` is a working sink to test
+*with* — it records what it received, and can be told to fail, so the promise
+that a failed export never fails a push is one you can exercise rather than
+hope for.
+
+```go
+func TestMySink(t *testing.T) {
+        audittest.Run(t, func(t *testing.T) (audit.Sink, audittest.Readback) {
+                sink := mysink.New(...)
+
+                return sink, func(t *testing.T, want int) []audit.Record {
+                        return audittest.Poll(t, want, sink.Received)
+                }
+        })
+}
+```
 
 ### `store.Store` — where the state lives
 

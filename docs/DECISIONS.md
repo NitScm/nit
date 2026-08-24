@@ -1362,3 +1362,43 @@ of our own. That is a product, and it is gap 7. This is the narrow half that
 stops a hosted control plane granting one customer's administrators access to
 another's operations API, and it is the last of the eight gaps that was shaped
 like code rather than like a product.
+
+## D48 — The assembly buffers audit exports, not the sink
+
+**Decision.** `pkg/nitd` puts a bounded, asynchronous queue in front of whatever
+`Deps.AuditSink` it is handed. `Emit` runs on a background goroutine, in
+batches, with a context derived from `context.Background()`. `pkg/audit` no
+longer asks implementations to buffer, and `pkg/audit/audittest` is the
+conformance suite that says what a sink must do instead.
+
+**Why it moved.** The old contract said "an implementation that talks to a
+network buffers and returns". That is the right requirement in the wrong place:
+it made every sink author write the same queue, and a queue written once per
+destination is a queue that loses records in a different way per destination.
+Written once, it is one thing to get right and one thing to test.
+
+**Why the context is not the request's.** `internal/auditlog` called `Emit`
+synchronously with the caller's context. A developer pressing Ctrl-C cancelled
+their push *and* the export of the decision already made about it — a record
+present in the database and absent from the SIEM, with nothing to say why. That
+is the failure an audit trail exists to not have.
+
+**Why a bounded queue that drops.** A destination that stays unreachable would
+otherwise grow the queue until the server has no memory for work it can still
+do. Dropping is sound here and nowhere else, for the reason stated since the
+seam was written: a sink is never the only copy. Drops are counted and logged;
+`Buffer.Dropped` is the number a deployment can put on a dashboard.
+
+**What this does not solve.** Recovering an export gap. Records dropped at the
+edge of an outage are in the database and nowhere else, and getting them to the
+destination afterwards means replaying from the database — a cursor, an
+ordering guarantee on `AuditQuery`, and something to run it. That is worth
+building and is not this. A bigger buffer is not a substitute for it, and
+pretending otherwise is how a deployment discovers the gap during an audit.
+
+**Why `audittest` now and not before.** It is the fifth seam to get a suite and
+the last one without. The suite is mostly about fidelity rather than delivery,
+because delivery is now the assembly's job and none of it helps if what arrives
+is not what was decided: a sink that drops an empty `RuleID` loses exactly the
+default-deny records, which are the ones nobody wrote a rule for and the ones
+worth reading.
