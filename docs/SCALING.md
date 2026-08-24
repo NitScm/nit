@@ -156,12 +156,21 @@ blob still exists before it is returned. An entry naming a swept patch would
 hand a client a digest it cannot fetch; a missing blob is treated as a miss, so
 the worst case is one recomputation.
 
-**Still per worker.** A shared cache would need a table, a migration on three
-backends and an invalidation story. A per-worker one needs none of that and
-still collapses the release-day herd, which arrives within minutes on the same
-handful of workers. `nitctl audit` shows which pulls reused a projection —
-`reused_projection` in the record's detail — so the hit rate is observable
-before anyone decides the shared version is worth its cost.
+**Per worker, and now replaceable.** A per-worker cache needs no table, no
+migration and no invalidation story, and it still collapses the release-day
+herd — which arrives within minutes on the same handful of workers. That is the
+right default and it is what ships.
+
+`pullcache.Store` is the seam for the deployment where "the same handful of
+workers" is not true: a control plane whose workers come and go, or one that
+would rather use a store it already runs. `worker.Deps.PullCache` takes a
+replacement, `pkg/pullcache/pullcachetest` proves one correct, and the
+commercial edition ships a fleet-wide implementation over the deployment's own
+database.
+
+Before deciding you need one: `nitctl audit` shows which pulls reused a
+projection — `reused_projection` in the record's detail — so the hit rate is
+measurable rather than assumed.
 
 **Also mitigated.** Dedicate workers to read traffic so it does not compete with
 pushes for disk:
@@ -427,11 +436,7 @@ Done, in the order they were taken:
 
 What remains, in priority order:
 
-1. **A shared pull cache** (§4) — only once `reused_projection` in the audit
-   trail shows the per-worker one missing often enough to justify a table and an
-   invalidation story.
-
-Nothing else on this list is load-bearing today. What remains in the document is
+Nothing on this list is load-bearing today. What remains in the document is
 either done, deliberately declined (partitioning `audit_log`, see D37), or
 waiting on evidence rather than on effort.
 

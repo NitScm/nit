@@ -60,6 +60,7 @@ import (
 	"github.com/NitScm/nit/pkg/gitx"
 	"github.com/NitScm/nit/pkg/policy"
 	"github.com/NitScm/nit/pkg/protocol"
+	"github.com/NitScm/nit/pkg/pullcache"
 	"github.com/NitScm/nit/pkg/store"
 )
 
@@ -126,6 +127,16 @@ type WorkerDeps struct {
 	// Forges resolve a repository's hosting provider. Nil uses the built-in
 	// registry.
 	Forges *forge.Registry
+
+	// PullCache shares a filtered projection between users whose read rights
+	// are identical. Nil uses the per-process cache that ships with nit, which
+	// already collapses a release-day herd on a fleet small enough that the
+	// herd lands on the same few workers.
+	//
+	// What a replacement must not reimplement is the key: policy.Profile
+	// decides who may share a projection, and its correctness is authorization
+	// correctness. See pkg/pullcache.
+	PullCache pullcache.Store
 }
 
 // WorkerOptions are the per-process choices that have no place in a
@@ -276,6 +287,7 @@ func Work(ctx context.Context, cfg Config, opts WorkerOptions, deps WorkerDeps) 
 		Log:        parts.log,
 		AuditSink:  deps.AuditSink,
 		Now:        deps.Now,
+		PullCache:  deps.PullCache,
 	})
 	if err != nil {
 		return err
