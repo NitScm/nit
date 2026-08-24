@@ -11,6 +11,7 @@ import (
 	"github.com/NitScm/nit/internal/pullcache"
 	"github.com/NitScm/nit/pkg/blob"
 	"github.com/NitScm/nit/pkg/protocol"
+	pullcachepkg "github.com/NitScm/nit/pkg/pullcache"
 )
 
 func newCache(t *testing.T, ttl time.Duration, now func() time.Time) (*pullcache.Cache, blob.Store) {
@@ -36,8 +37,8 @@ func store(t *testing.T, blobs blob.Store, content string) *protocol.Blob {
 	return &protocol.Blob{Digest: descriptor.Digest, Size: descriptor.Size}
 }
 
-func key(profile string) pullcache.Key {
-	return pullcache.Key{
+func key(profile string) pullcachepkg.Key {
+	return pullcachepkg.Key{
 		Repository: "https://example.com/repo.git",
 		From:       "aaaa",
 		To:         "bbbb",
@@ -49,16 +50,16 @@ func TestAStoredProjectionComesBack(t *testing.T) {
 	c, blobs := newCache(t, time.Hour, nil)
 	ctx := context.Background()
 
-	want := pullcache.Entry{
+	want := pullcachepkg.Entry{
 		Patch:          store(t, blobs, "diff"),
 		FilesTotal:     3,
 		FilesDelivered: 2,
 		FilesWithheld:  1,
 	}
 
-	c.Put(key("profile-a"), want)
+	c.Put(ctx, key("profile-a"), want)
 
-	got, ok := c.Get(ctx, key("profile-a"))
+	got, ok, _ := c.Get(ctx, key("profile-a"))
 	if !ok {
 		t.Fatal("the entry just stored was not found")
 	}
@@ -77,19 +78,19 @@ func TestEveryPartOfTheKeySeparates(t *testing.T) {
 	ctx := context.Background()
 
 	base := key("profile-a")
-	c.Put(base, pullcache.Entry{Patch: store(t, blobs, "diff")})
+	c.Put(ctx, base, pullcachepkg.Entry{Patch: store(t, blobs, "diff")})
 
 	for _, tc := range []struct {
 		name string
-		key  pullcache.Key
+		key  pullcachepkg.Key
 	}{
-		{"repository", pullcache.Key{Repository: "other", From: base.From, To: base.To, Profile: base.Profile}},
-		{"from", pullcache.Key{Repository: base.Repository, From: "cccc", To: base.To, Profile: base.Profile}},
-		{"to", pullcache.Key{Repository: base.Repository, From: base.From, To: "cccc", Profile: base.Profile}},
-		{"profile", pullcache.Key{Repository: base.Repository, From: base.From, To: base.To, Profile: "profile-b"}},
+		{"repository", pullcachepkg.Key{Repository: "other", From: base.From, To: base.To, Profile: base.Profile}},
+		{"from", pullcachepkg.Key{Repository: base.Repository, From: "cccc", To: base.To, Profile: base.Profile}},
+		{"to", pullcachepkg.Key{Repository: base.Repository, From: base.From, To: "cccc", Profile: base.Profile}},
+		{"profile", pullcachepkg.Key{Repository: base.Repository, From: base.From, To: base.To, Profile: "profile-b"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, ok := c.Get(ctx, tc.key); ok {
+			if _, ok, _ := c.Get(ctx, tc.key); ok {
 				t.Errorf("a key differing only in %s hit", tc.name)
 			}
 		})
@@ -102,10 +103,10 @@ func TestKeyFieldsCannotRunTogether(t *testing.T) {
 	c, blobs := newCache(t, time.Hour, nil)
 	ctx := context.Background()
 
-	c.Put(pullcache.Key{Repository: "ab", From: "c", To: "d", Profile: "e"},
-		pullcache.Entry{Patch: store(t, blobs, "diff")})
+	c.Put(ctx, pullcachepkg.Key{Repository: "ab", From: "c", To: "d", Profile: "e"},
+		pullcachepkg.Entry{Patch: store(t, blobs, "diff")})
 
-	if _, ok := c.Get(ctx, pullcache.Key{Repository: "a", From: "bc", To: "d", Profile: "e"}); ok {
+	if _, ok, _ := c.Get(ctx, pullcachepkg.Key{Repository: "a", From: "bc", To: "d", Profile: "e"}); ok {
 		t.Error(`"ab"+"c" collided with "a"+"bc"`)
 	}
 }
@@ -117,15 +118,15 @@ func TestAnExpiredEntryIsAMiss(t *testing.T) {
 	c, blobs := newCache(t, time.Minute, clock)
 	ctx := context.Background()
 
-	c.Put(key("profile-a"), pullcache.Entry{Patch: store(t, blobs, "diff")})
+	c.Put(ctx, key("profile-a"), pullcachepkg.Entry{Patch: store(t, blobs, "diff")})
 
 	now = now.Add(59 * time.Second)
-	if _, ok := c.Get(ctx, key("profile-a")); !ok {
+	if _, ok, _ := c.Get(ctx, key("profile-a")); !ok {
 		t.Error("the entry expired early")
 	}
 
 	now = now.Add(2 * time.Second)
-	if _, ok := c.Get(ctx, key("profile-a")); ok {
+	if _, ok, _ := c.Get(ctx, key("profile-a")); ok {
 		t.Error("the entry outlived its TTL")
 	}
 	if c.Len() != 0 {
@@ -141,13 +142,13 @@ func TestAnEntryWhoseBlobIsGoneIsAMiss(t *testing.T) {
 	ctx := context.Background()
 
 	descriptor := store(t, blobs, "diff")
-	c.Put(key("profile-a"), pullcache.Entry{Patch: descriptor})
+	c.Put(ctx, key("profile-a"), pullcachepkg.Entry{Patch: descriptor})
 
 	if err := blobs.Delete(ctx, descriptor.Digest); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
 
-	if _, ok := c.Get(ctx, key("profile-a")); ok {
+	if _, ok, _ := c.Get(ctx, key("profile-a")); ok {
 		t.Fatal("a hit named a patch that no longer exists")
 	}
 
@@ -163,9 +164,9 @@ func TestAnEmptyProjectionIsCached(t *testing.T) {
 	c, _ := newCache(t, time.Hour, nil)
 	ctx := context.Background()
 
-	c.Put(key("profile-a"), pullcache.Entry{FilesTotal: 2, FilesWithheld: 2})
+	c.Put(ctx, key("profile-a"), pullcachepkg.Entry{FilesTotal: 2, FilesWithheld: 2})
 
-	got, ok := c.Get(ctx, key("profile-a"))
+	got, ok, _ := c.Get(ctx, key("profile-a"))
 	if !ok {
 		t.Fatal("an empty projection was not cached")
 	}
@@ -185,16 +186,16 @@ func TestTheLeastRecentlyUsedEntryIsEvicted(t *testing.T) {
 
 	// One more than the cache holds.
 	for i := range pullcache.DefaultEntries + 1 {
-		c.Put(key(fmt.Sprintf("profile-%d", i)), pullcache.Entry{Patch: descriptor})
+		c.Put(ctx, key(fmt.Sprintf("profile-%d", i)), pullcachepkg.Entry{Patch: descriptor})
 	}
 
 	if c.Len() != pullcache.DefaultEntries {
 		t.Errorf("Len = %d, want the cache bounded at %d", c.Len(), pullcache.DefaultEntries)
 	}
-	if _, ok := c.Get(ctx, key("profile-0")); ok {
+	if _, ok, _ := c.Get(ctx, key("profile-0")); ok {
 		t.Error("the oldest entry survived; the cache is not bounded by use")
 	}
-	if _, ok := c.Get(ctx, key(fmt.Sprintf("profile-%d", pullcache.DefaultEntries))); !ok {
+	if _, ok, _ := c.Get(ctx, key(fmt.Sprintf("profile-%d", pullcache.DefaultEntries))); !ok {
 		t.Error("the newest entry was evicted")
 	}
 }
@@ -209,20 +210,20 @@ func TestAReadEntrySurvivesEviction(t *testing.T) {
 	descriptor := store(t, blobs, "diff")
 
 	for i := range pullcache.DefaultEntries {
-		c.Put(key(fmt.Sprintf("profile-%d", i)), pullcache.Entry{Patch: descriptor})
+		c.Put(ctx, key(fmt.Sprintf("profile-%d", i)), pullcachepkg.Entry{Patch: descriptor})
 	}
 
 	// Touch the oldest, then push one more in.
-	if _, ok := c.Get(ctx, key("profile-0")); !ok {
+	if _, ok, _ := c.Get(ctx, key("profile-0")); !ok {
 		t.Fatal("the oldest entry was already gone")
 	}
 
-	c.Put(key("profile-new"), pullcache.Entry{Patch: descriptor})
+	c.Put(ctx, key("profile-new"), pullcachepkg.Entry{Patch: descriptor})
 
-	if _, ok := c.Get(ctx, key("profile-0")); !ok {
+	if _, ok, _ := c.Get(ctx, key("profile-0")); !ok {
 		t.Error("a recently read entry was evicted")
 	}
-	if _, ok := c.Get(ctx, key("profile-1")); ok {
+	if _, ok, _ := c.Get(ctx, key("profile-1")); ok {
 		t.Error("the actual least recently used entry survived")
 	}
 }
@@ -232,9 +233,9 @@ func TestAZeroTTLDisablesTheCache(t *testing.T) {
 	c, blobs := newCache(t, 0, nil)
 	ctx := context.Background()
 
-	c.Put(key("profile-a"), pullcache.Entry{Patch: store(t, blobs, "diff")})
+	c.Put(ctx, key("profile-a"), pullcachepkg.Entry{Patch: store(t, blobs, "diff")})
 
-	if _, ok := c.Get(ctx, key("profile-a")); ok {
+	if _, ok, _ := c.Get(ctx, key("profile-a")); ok {
 		t.Error("a cache with no TTL served an entry")
 	}
 	if c.Len() != 0 {
@@ -247,11 +248,13 @@ func TestAZeroTTLDisablesTheCache(t *testing.T) {
 func TestANilCacheIsUsable(t *testing.T) {
 	var c *pullcache.Cache
 
-	if _, ok := c.Get(context.Background(), key("profile-a")); ok {
+	if _, ok, _ := c.Get(context.Background(), key("profile-a")); ok {
 		t.Error("a nil cache returned a hit")
 	}
 
-	c.Put(key("profile-a"), pullcache.Entry{})
+	if err := c.Put(context.Background(), key("profile-a"), pullcachepkg.Entry{}); err != nil {
+		t.Errorf("Put on a nil cache: %v", err)
+	}
 
 	if c.Len() != 0 {
 		t.Error("a nil cache reported entries")
@@ -273,8 +276,8 @@ func TestConcurrentUse(t *testing.T) {
 			for i := range 200 {
 				k := key(fmt.Sprintf("profile-%d", (worker*200+i)%50))
 
-				if _, ok := c.Get(ctx, k); !ok {
-					c.Put(k, pullcache.Entry{Patch: descriptor})
+				if _, ok, _ := c.Get(ctx, k); !ok {
+					c.Put(ctx, k, pullcachepkg.Entry{Patch: descriptor})
 				}
 			}
 		}()

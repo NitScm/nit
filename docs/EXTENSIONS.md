@@ -194,6 +194,31 @@ is the same for a worker.
 `cmd/nitd` and `cmd/nit-worker` are built on this, which is the point: a façade
 used only by people outside the module would drift from what nit actually does.
 
+### `pullcache.Store` — where a shared projection is remembered
+
+A pull's output depends on the subject only through what the subject may read,
+so everyone with the same rights receives the same bytes. The cache that ships
+holds that per process, which already collapses a release-day herd — it arrives
+within minutes on the same handful of workers.
+
+A deployment large enough to want one cache across a fleet implements this
+instead. `pkg/pullcache/pullcachetest` is the suite that proves one correct.
+
+**What an implementation must not reimplement is the key.** `policy.Profile`
+decides who may share a projection, and its correctness is authorization
+correctness: two subjects with different rights sharing a profile is one person
+receiving another's files. `Key.Hash` is the canonical identity — use it. Most
+of the conformance suite is about keys for that reason, including the assertion
+that two different keys cannot concatenate to the same bytes.
+
+Two more obligations: a failure is a **miss**, never an error the caller must
+handle — a pull that failed because a cache was unreachable is worse than one
+that recomputed silently — and an entry must not outlive the patch it names,
+which is why the shipped one expires well inside the artifact TTL and verifies
+the blob before returning a hit.
+
+Set one on `worker.Deps.PullCache`. Nil uses the cache that ships.
+
 ## What is deliberately not a seam
 
 **Enforcement.** `pkg/enforce` decides what a push may land and what a pull may
@@ -216,7 +241,7 @@ These are the product, and their reasoning is in [`DECISIONS.md`](DECISIONS.md)
 ## Proposing a new seam
 
 Open an issue first. A public interface is a promise, and the bar is that it
-has to be useful to somebody with no unusual requirements — the four above
+has to be useful to somebody with no unusual requirements — the five above
 each are.
 
 ## On the commercial edition

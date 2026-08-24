@@ -33,6 +33,7 @@ import (
 	"github.com/NitScm/nit/pkg/gitx"
 	"github.com/NitScm/nit/pkg/policy"
 	"github.com/NitScm/nit/pkg/protocol"
+	pullcachepkg "github.com/NitScm/nit/pkg/pullcache"
 	"github.com/NitScm/nit/pkg/store"
 )
 
@@ -102,6 +103,15 @@ type Deps struct {
 	// AuditSink receives every decision in addition to the database. Nil means
 	// persist only, which is the default and what most deployments run.
 	AuditSink audit.Sink
+
+	// PullCache shares a filtered projection between users whose read rights
+	// are identical. Nil uses the per-process cache that ships with nit.
+	//
+	// What a replacement must not reimplement is the *key*: policy.Profile
+	// decides who may share a projection, and its correctness is authorization
+	// correctness. An implementation stores what it is given under the key it
+	// is given. See pkg/pullcache.
+	PullCache pullcachepkg.Store
 }
 
 // Worker executes tasks.
@@ -116,7 +126,7 @@ type Worker struct {
 	// pulls shares a filtered projection between users with identical read
 	// rights, which is what keeps a release day from costing one diff and one
 	// filter pass per developer.
-	pulls *pullcache.Cache
+	pulls pullcachepkg.Store
 
 	// audit persists every decision and forwards it, and cannot fail a task
 	// while doing so.
@@ -159,10 +169,18 @@ func New(cfg Config, deps Deps) (*Worker, error) {
 		return nil, err
 	}
 
+	// Supplied, or the one that ships. A deployment large enough to want one
+	// cache across a fleet — or one that already runs a shared store — passes
+	// its own; everybody else gets the per-process LRU, which already collapses
+	// a release-day herd because the herd arrives on the same few workers.
+	//
 	// A quarter of the artifact TTL. An entry naming a swept patch is a hit
-	// that cannot be fetched, and while pullcache.Get verifies the blob before
-	// returning one, expiring well inside the window means it rarely has to.
-	pulls := pullcache.New(deps.Blobs, cfg.PullArtifactTTL/4, deps.Now)
+	// that cannot be fetched, and while Get verifies the blob before returning
+	// one, expiring well inside the window means it rarely has to.
+	pulls := deps.PullCache
+	if pulls == nil {
+		pulls = pullcache.New(deps.Blobs, cfg.PullArtifactTTL/4, deps.Now)
+	}
 
 	return &Worker{
 		cfg:   cfg,

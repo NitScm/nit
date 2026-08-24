@@ -8,13 +8,13 @@ import (
 	"strconv"
 
 	"github.com/NitScm/nit/internal/compress"
-	"github.com/NitScm/nit/internal/pullcache"
 	"github.com/NitScm/nit/internal/synctoken"
 	"github.com/NitScm/nit/internal/taskspec"
 	"github.com/NitScm/nit/pkg/enforce"
 	"github.com/NitScm/nit/pkg/patch"
 	"github.com/NitScm/nit/pkg/policy"
 	"github.com/NitScm/nit/pkg/protocol"
+	"github.com/NitScm/nit/pkg/pullcache"
 	"github.com/NitScm/nit/pkg/store"
 )
 
@@ -111,7 +111,15 @@ func (w *Worker) handlePull(ctx context.Context, task *store.Task) ([]byte, erro
 			policy.ActionRead, subject),
 	}
 
-	entry, cached := w.pulls.Get(ctx, key)
+	entry, cached, err := w.pulls.Get(ctx, key)
+	if err != nil {
+		// A cache that cannot be reached is a miss, never a failed pull: the
+		// work it would have saved is work this task can still do.
+		w.deps.Log.Warn("pull cache unavailable, recomputing", "error", err)
+
+		cached = false
+	}
+
 	if !cached {
 		raw, err := repo.Diff(ctx, from, tip)
 		if err != nil {
@@ -137,7 +145,11 @@ func (w *Worker) handlePull(ctx context.Context, task *store.Task) ([]byte, erro
 			entry.Patch = &descriptor
 		}
 
-		w.pulls.Put(key, entry)
+		if err := w.pulls.Put(ctx, key, entry); err != nil {
+			// Same direction: the projection is stored and the client is about
+			// to be served. Failing here would throw away finished work.
+			w.deps.Log.Warn("could not record the projection for reuse", "error", err)
+		}
 	}
 
 	result.Report.FilesTotal = entry.FilesTotal
