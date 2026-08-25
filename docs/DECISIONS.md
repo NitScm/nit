@@ -966,7 +966,7 @@ wrong for the whole: `store.Store`, `blob.Store`, `policy.Source` and
 `audit.Sink` are all public extension points, and until now an implementation of
 one could be written but never *run*.
 
-Found by building `nit-enterprise` — the compiler said it plainly:
+Found by building the commercial edition — the compiler said it plainly:
 `use of internal package github.com/NitScm/nit/internal/server not allowed`.
 
 **Why the exception is safe.** The rule protects the authorization path from
@@ -1182,9 +1182,8 @@ side channel waiting for the first endpoint that takes a digest — and
 cross-tenant dedup is worth nothing, so there is no argument on the other side.
 
 **Why no interface change.** A tenant is a different *root*, not a different
-method signature. `blob.Store` is untouched, the S3 implementation in the
-commercial edition uses its existing prefix, and the conformance suite did not
-move.
+method signature. `blob.Store` is untouched, every existing implementation
+keeps working unchanged, and the conformance suite did not move.
 
 **Why the fallback.** The blob store holds the authorized patch between the
 control plane and a worker, so a patch that becomes unreachable mid-flight is a
@@ -1298,8 +1297,8 @@ unchanged.
 **Why not put the tenant on `Source.Current`.** `Current` is on the request path
 and must be an atomic load, while *finding* a tenant's source may read a
 directory or fetch from elsewhere. Separating them keeps the cheap thing cheap —
-and leaves every existing implementation working, including the directory source
-in the commercial edition and anything written out of tree. A seam is a promise;
+and leaves every existing implementation working, including anything written
+out of tree. A seam is a promise;
 widening it to add a capability nobody has asked for yet would break that
 promise for a feature that is not shipped.
 

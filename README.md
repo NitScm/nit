@@ -202,6 +202,25 @@ there. Publishing a binary claims it works; that claim waits for a test.
 Full instructions, including checksum verification and PowerShell:
 <https://nitscm.github.io/docs/start/install/>
 
+## There is a commercial edition
+
+Not described here, and deliberately: what it is for belongs in the
+documentation, and what it contains is somebody else's repository. Two facts
+belong here, because they are facts about **this** one.
+
+**Nothing in this repository is licensed differently.** No `ee/` directory, no
+build tag, no file that says otherwise. You can know the licence of what you are
+writing from the fact that you are writing it here.
+
+**No seam here is a stub waiting for a key.** Every extension point in
+[`docs/EXTENSIONS.md`](docs/EXTENSIONS.md) ships with a working implementation
+and a conformance suite that proves one correct. If any of them ever behaves
+like a placeholder, that is a bug worth reporting rather than a pricing
+decision.
+
+Why a company would want more than this — and, said plainly, who does not need
+it — is at <https://nitscm.github.io/docs/enterprise/>.
+
 ## Building
 
 Requires Go 1.25 and git.

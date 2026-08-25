@@ -165,8 +165,7 @@ right default and it is what ships.
 workers" is not true: a control plane whose workers come and go, or one that
 would rather use a store it already runs. `worker.Deps.PullCache` takes a
 replacement, `pkg/pullcache/pullcachetest` proves one correct, and the
-commercial edition ships a fleet-wide implementation over the deployment's own
-database.
+commercial edition ships one.
 
 Before deciding you need one: `nitctl audit` shows which pulls reused a
 projection — `reused_projection` in the record's detail — so the hit rate is
