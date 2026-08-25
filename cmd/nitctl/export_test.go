@@ -105,3 +105,35 @@ func TestParseWhenReadsTheThreeFormsAnOperatorTypes(t *testing.T) {
 		t.Error("parseWhen accepted something it cannot have understood")
 	}
 }
+
+// A bare date as the closing bound means the end of that day. Excluding
+// everything that happened on the day an operator named is the kind of surprise
+// that makes them conclude the records are missing — and something would be
+// wrong, just not what they think.
+func TestABareDateAsTheEndMeansTheEndOfThatDay(t *testing.T) {
+	window, err := resolveWindow("2026-03-01", "2026-03-02", time.Minute)
+	if err != nil {
+		t.Fatalf("resolveWindow: %v", err)
+	}
+
+	// Something at nine in the morning on the second is inside the window.
+	during := time.Date(2026, 3, 2, 9, 0, 0, 0, time.UTC)
+
+	if during.After(window.until) {
+		t.Errorf("until = %s, so %s falls outside a window that names its day",
+			window.until, during)
+	}
+
+	// And the day after is not.
+	next := time.Date(2026, 3, 3, 0, 0, 0, 0, time.UTC)
+
+	if !next.After(window.until) {
+		t.Errorf("until = %s reaches into the following day", window.until)
+	}
+
+	// The opening bound still means the first instant of its day, which is what
+	// "since" means.
+	if !window.since.Equal(time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)) {
+		t.Errorf("since = %s, want the start of the first", window.since)
+	}
+}

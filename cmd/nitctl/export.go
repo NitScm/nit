@@ -167,7 +167,7 @@ func resolveWindow(since, until string, settle time.Duration) (exportWindow, err
 	if until == "" {
 		w.until = ceiling
 	} else {
-		parsed, err := parseWhen(until)
+		parsed, err := parseEnd(until)
 		if err != nil {
 			return w, fmt.Errorf("-until: %w", err)
 		}
@@ -188,6 +188,20 @@ func resolveWindow(since, until string, settle time.Duration) (exportWindow, err
 	}
 
 	return w, nil
+}
+
+// parseEnd reads the closing bound of a window.
+//
+// A bare date means the end of that day, not its first instant. "-until
+// 2026-03-01" excluding everything that happened on the first of March is the
+// kind of surprise that makes an operator conclude the records are missing, and
+// they would be right that something is wrong.
+func parseEnd(value string) (time.Time, error) {
+	if day, err := time.Parse("2006-01-02", value); err == nil {
+		return day.UTC().Add(24*time.Hour - time.Nanosecond), nil
+	}
+
+	return parseWhen(value)
 }
 
 // parseWhen reads a date, an RFC3339 timestamp, or a duration back from now.
