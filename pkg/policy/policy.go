@@ -130,6 +130,36 @@ func (p *Policy) User(id UserID) (User, bool) {
 	return u, ok
 }
 
+// Users returns every person in the bundle, sorted by id.
+//
+// For tools that have to walk the whole bundle — comparing two of them, or
+// reporting on one. Evaluation never needs this: it starts from a subject it
+// was given.
+func (p *Policy) Users() []User {
+	out := make([]User, 0, len(p.users))
+
+	for _, u := range p.users {
+		out = append(out, u)
+	}
+
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+
+	return out
+}
+
+// Groups returns every group in the bundle, sorted by id.
+func (p *Policy) Groups() []Group {
+	out := make([]Group, 0, len(p.groups))
+
+	for _, g := range p.groups {
+		out = append(out, g)
+	}
+
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+
+	return out
+}
+
 // Rules returns the rules attached to a repository, in bundle order. The order
 // carries no semantics; it is preserved only so reports read like the file.
 func (p *Policy) Rules(repo RepoID) []*Rule {

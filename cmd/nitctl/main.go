@@ -136,6 +136,8 @@ func run(args []string) error {
 		return policyValidate(args[2:])
 	case "explain":
 		return policyExplain(args[2:])
+	case "diff":
+		return policyDiff(args[2:])
 	case "show":
 		return policyShow(args[2:])
 	default:

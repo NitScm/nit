@@ -237,3 +237,58 @@ every patch.
 commit authorship. They are **never** used to authenticate: the author field of
 a commit is free text that anyone can forge. Identity always comes from the
 authenticated session.
+
+---
+
+## 10. Reviewing a change
+
+`nitctl policy validate` says a bundle is well-formed. It does not say what a
+change *does*, and past the size where one person knows every rule, that is the
+question review has to answer.
+
+```
+nitctl policy diff <before-dir> <after-dir> [-widening] [-json] [-exit-code]
+```
+
+It expands every rule through group membership and reports, per person, what
+they gained and lost:
+
+```
+carol
+  now allowed   read  payments  config/**   r-config   via backend
+  DENY REMOVED  read  payments  secrets/**  r-secrets  via any
+
+2 people can reach more than before.
+```
+
+Three things about that output are deliberate.
+
+**Four directions, not two.** Deny wins (section 2), so a gained deny is *less*
+access and a lost deny is more. A tool reporting "added" and "removed" would put
+the most dangerous change — a deletion — in the column people skim.
+
+**`via` is a column.** "carol gained read on `config/**`" invites the question
+"how?", and the answer is usually where somebody notices a group has grown a
+member nobody meant to add. That change touches no rule, and its YAML diff is
+one line in another file.
+
+**Reordering reports nothing.** The engine considers every matching rule, so
+rules can be reordered, split or regrouped freely. A tool that cried on every
+reorder would be ignored within a week.
+
+### In CI
+
+`-exit-code` exits 1 when anything changed, as `git diff --exit-code` does. On a
+pull request that touches the bundle, the output belongs in a comment: a change
+that widens somebody's access should not merge without a human having read a
+list of who, and to what.
+
+### What it cannot tell you
+
+It compares rules as they apply to people, not outcomes at every path. Paths are
+infinite; any enumeration would be a sample, and a sample that missed the one
+path that mattered would be worse than no answer.
+
+For one path and one person, `nitctl policy explain` answers exactly. The two
+are for different moments: `explain` is for a question somebody already has,
+`diff` is for the change nobody thought to ask about.
