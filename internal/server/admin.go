@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/NitScm/nit/internal/auth"
+	"sort"
+
 	"github.com/NitScm/nit/pkg/policy"
 	"github.com/NitScm/nit/pkg/protocol"
 	"github.com/NitScm/nit/pkg/store"
@@ -416,8 +418,23 @@ func (s *Server) handleAdminStats(w http.ResponseWriter, r *http.Request) error 
 // PolicyView describes the bundle in force, so the console can show what the
 // rules actually are without anyone reading YAML on a server.
 type PolicyView struct {
-	Version      string           `json:"version"`
-	Repositories []PolicyRepoView `json:"repositories"`
+	Version      string            `json:"version"`
+	Groups       []PolicyGroupView `json:"groups"`
+	Repositories []PolicyRepoView  `json:"repositories"`
+}
+
+// PolicyGroupView is a group as the running server resolved it.
+//
+// Members is the effective membership — everyone the group reaches, including
+// through Includes — and not the list in the file. Where a group's membership
+// comes from somewhere the file does not name, such as a directory read at run
+// time, the file answers the wrong question and this is the only place the
+// right one is asked.
+type PolicyGroupView struct {
+	ID          string   `json:"id"`
+	Description string   `json:"description,omitempty"`
+	Members     []string `json:"members"`
+	Includes    []string `json:"includes,omitempty"`
 }
 
 // PolicyRepoView is one repository and its rules.
@@ -449,7 +466,7 @@ func (s *Server) handleAdminPolicy(w http.ResponseWriter, r *http.Request) error
 		return err
 	}
 
-	view := PolicyView{Version: current.Version()}
+	view := PolicyView{Version: current.Version(), Groups: groupViews(current)}
 
 	for _, repo := range current.Repositories() {
 		repoView := PolicyRepoView{
@@ -489,6 +506,47 @@ func (s *Server) handleAdminPolicy(w http.ResponseWriter, r *http.Request) error
 	writeJSON(w, http.StatusOK, view)
 
 	return nil
+}
+
+// groupViews resolves effective membership for every group in the bundle.
+func groupViews(p *policy.Policy) []PolicyGroupView {
+	members := map[policy.GroupID][]string{}
+
+	for _, user := range p.Users() {
+		subject, err := p.Subject(user.ID)
+		if err != nil {
+			continue
+		}
+
+		for _, group := range subject.Groups {
+			members[group] = append(members[group], string(user.ID))
+		}
+	}
+
+	groups := p.Groups()
+	out := make([]PolicyGroupView, 0, len(groups))
+
+	for _, g := range groups {
+		view := PolicyGroupView{
+			ID:          string(g.ID),
+			Description: g.Description,
+			Members:     members[g.ID],
+		}
+
+		if view.Members == nil {
+			view.Members = []string{}
+		}
+
+		sort.Strings(view.Members)
+
+		for _, inc := range g.Includes {
+			view.Includes = append(view.Includes, string(inc))
+		}
+
+		out = append(out, view)
+	}
+
+	return out
 }
 
 // ---------------------------------------------------------------------------

@@ -102,6 +102,14 @@ func LoadSpecFS(fsys fs.FS) (policy.Spec, error) {
 		return policy.Spec{}, err
 	}
 	for _, g := range groups {
+		// The directory namespace belongs to whatever reads the company's
+		// directory at run time. A bundle that wrote into it would be competing
+		// with a source it cannot see, and whichever won would be an accident.
+		if strings.HasPrefix(g.ID, policy.DirectoryPrefix) {
+			return policy.Spec{}, fmt.Errorf("%w: %q in %s",
+				policy.ErrReservedGroupPrefix, g.ID, groupsFile)
+		}
+
 		group := policy.Group{
 			ID:          policy.GroupID(g.ID),
 			Description: g.Description,

@@ -1274,10 +1274,36 @@ components:
         version:
           type: string
           description: A content hash of the bundle.
+        groups:
+          type: array
+          items:
+            $ref: "#/components/schemas/PolicyGroup"
         repositories:
           type: array
           items:
             $ref: "#/components/schemas/PolicyRepository"
+
+    PolicyGroup:
+      type: object
+      description: |
+        A group as the running server resolved it. `members` is effective
+        membership — everyone the group reaches, including through `includes` —
+        and not the list in `groups.yaml`. Where membership comes from somewhere
+        the files do not name, such as a directory read at run time, the files
+        answer the wrong question and this is where the right one is asked.
+      properties:
+        id:
+          type: string
+        description:
+          type: string
+        members:
+          type: array
+          items:
+            type: string
+        includes:
+          type: array
+          items:
+            type: string
 
     PolicyRepository:
       type: object

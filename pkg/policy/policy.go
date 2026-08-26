@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 )
 
 // Spec is the input of Compile: a policy bundle as authored, before validation.
@@ -78,6 +79,8 @@ func Compile(spec Spec) (*Policy, error) {
 		}
 		p.groups[g.ID] = g
 	}
+
+	p.adoptDirectoryGroups(spec)
 
 	for _, r := range spec.Repositories {
 		if r.ID == "" {
@@ -173,6 +176,75 @@ func (p *Policy) Subject(id UserID) (Subject, error) {
 	}
 
 	return Subject{UserID: id, Groups: p.memberships[id]}, nil
+}
+
+// ErrReservedGroupPrefix is returned when a bundle's files declare a group
+// under DirectoryPrefix.
+//
+// It is the loader that refuses it, not Compile: a connector reading a company
+// directory has to put its groups into a Spec somehow, and by then they are
+// indistinguishable from any other group. The rule is about what a person may
+// write down, so it belongs where the writing is read.
+var ErrReservedGroupPrefix = errors.New("policy: a bundle may not declare a group under " + DirectoryPrefix)
+
+// DirectoryPrefix marks a group whose membership comes from somewhere other
+// than these files — a company directory, read by a connector at run time.
+//
+// A bundle never declares such a group; it only refers to one, usually through
+// `includes`. That is the whole point of the prefix: it is a namespace no file
+// in the bundle may write into, so a group somebody creates in the directory
+// can never take over a group the rules name. Deployments that read a directory
+// enforce that; deployments that do not have nothing to enforce.
+//
+// Referring to one without a directory to supply it is allowed, and resolves to
+// an empty group. It has to be: the same bundle is validated in CI, where there
+// are no directory credentials and should not be, and read by a server that has
+// them. An empty group grants nobody anything, so the version that resolves to
+// less is the one that runs where less is known.
+const DirectoryPrefix = "idp:"
+
+// adoptDirectoryGroups declares, as empty, every directory group the bundle
+// refers to and nothing supplied.
+//
+// It runs before checkGroupReferences, so an ordinary typo in an ordinary group
+// name is still refused. A typo under the prefix is not caught here — it
+// becomes an empty group, which is a narrowing rather than a widening, and the
+// connector logs it at warning where a directory is actually configured.
+func (p *Policy) adoptDirectoryGroups(spec Spec) {
+	adopt := func(id GroupID) {
+		if !strings.HasPrefix(string(id), DirectoryPrefix) {
+			return
+		}
+
+		if _, declared := p.groups[id]; declared {
+			return
+		}
+
+		p.groups[id] = Group{
+			ID:          id,
+			Description: "from a directory; empty here",
+		}
+	}
+
+	for _, g := range spec.Groups {
+		for _, inc := range g.Includes {
+			adopt(inc)
+		}
+	}
+
+	for _, rules := range spec.Rules {
+		for _, r := range rules {
+			if r.Subject.Type == SubjectTypeGroup {
+				adopt(GroupID(r.Subject.ID))
+			}
+
+			for _, e := range r.Except {
+				if e.Type == SubjectTypeGroup {
+					adopt(GroupID(e.ID))
+				}
+			}
+		}
+	}
 }
 
 func (p *Policy) checkGroupReferences() error {

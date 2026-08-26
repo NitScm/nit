@@ -220,6 +220,39 @@ an ordinary rule:
 Membership is transitively resolved once, at compile time — not per path of
 every patch.
 
+### Groups from a directory: the `idp:` prefix
+
+A group id starting with `idp:` names a group whose membership comes from
+somewhere other than these files — a company directory, read by a connector at
+run time. A bundle **refers** to one; it may not **declare** one:
+
+```yaml
+- id: payments
+  description: The payments team
+  includes: [idp:payments]     # membership from the directory
+  members: [break-glass]       # and one named here, deliberately
+```
+
+Two things follow, and both matter more than they look.
+
+**A group in the directory can never take over a group the rules name.** The
+prefix is a namespace no file in the bundle may write into, so creating a group
+called `payments` in the directory grants nothing: only `idp:payments` exists,
+and only because a reviewed line references it. Whoever administers the
+directory is usually not the set of people who review this bundle.
+
+**A bundle that names a directory does not require one.** With nothing to supply
+it, `idp:payments` compiles to an **empty group**. That is what lets the same
+files be validated in CI, on a laptop, and by `nitctl policy test` — none of
+which has a credential for the directory, and none of which should. An empty
+group grants nobody anything, so the version that resolves where less is known
+grants strictly less: a reviewer sees the floor of what a bundle permits, never
+the ceiling.
+
+A misspelled `idp:` group is therefore not a load error. It becomes an empty
+group, which denies rather than grants; a deployment that actually reads a
+directory logs it at warning, with the group named.
+
 ---
 
 ## 9. Identity
