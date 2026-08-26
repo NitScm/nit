@@ -43,6 +43,9 @@ type Store struct {
 	// to what that tenant's bundle says.
 	adminGroups map[policy.TenantID][]policy.GroupID
 
+	// policyVersions is which bundles this deployment has had in force.
+	policyVersions map[string]*store.PolicyVersion
+
 	auditSeq int64
 }
 
@@ -65,16 +68,17 @@ func New() *Store {
 	}
 }
 
-func (s *Store) Users() store.UserStore              { return (*userStore)(s) }
-func (s *Store) Sessions() store.SessionStore        { return (*sessionStore)(s) }
-func (s *Store) Workspaces() store.WorkspaceStore    { return (*workspaceStore)(s) }
-func (s *Store) Repositories() store.RepositoryStore { return (*repositoryStore)(s) }
-func (s *Store) SyncPoints() store.SyncPointStore    { return (*syncPointStore)(s) }
-func (s *Store) Tasks() store.TaskStore              { return (*taskStore)(s) }
-func (s *Store) Artifacts() store.ArtifactStore      { return (*artifactStore)(s) }
-func (s *Store) Audit() store.AuditStore             { return (*auditStore)(s) }
-func (s *Store) Tenants() store.TenantStore          { return (*tenantStore)(s) }
-func (s *Store) Close() error                        { return nil }
+func (s *Store) Users() store.UserStore                   { return (*userStore)(s) }
+func (s *Store) Sessions() store.SessionStore             { return (*sessionStore)(s) }
+func (s *Store) Workspaces() store.WorkspaceStore         { return (*workspaceStore)(s) }
+func (s *Store) Repositories() store.RepositoryStore      { return (*repositoryStore)(s) }
+func (s *Store) SyncPoints() store.SyncPointStore         { return (*syncPointStore)(s) }
+func (s *Store) Tasks() store.TaskStore                   { return (*taskStore)(s) }
+func (s *Store) Artifacts() store.ArtifactStore           { return (*artifactStore)(s) }
+func (s *Store) Audit() store.AuditStore                  { return (*auditStore)(s) }
+func (s *Store) Tenants() store.TenantStore               { return (*tenantStore)(s) }
+func (s *Store) PolicyVersions() store.PolicyVersionStore { return (*policyVersionStore)(s) }
+func (s *Store) Close() error                             { return nil }
 
 func (s *Store) nextID(prefix string) store.ID {
 	return store.ID(fmt.Sprintf("%s-%d", prefix, s.seq.Add(1)))
@@ -578,3 +582,103 @@ var (
 	_ store.ArtifactStore   = (*artifactStore)(nil)
 	_ store.AuditStore      = (*auditStore)(nil)
 )
+
+// ---------------------------------------------------------------------------
+// Policy versions
+// ---------------------------------------------------------------------------
+
+type policyVersionStore Store
+
+func (s *policyVersionStore) key(tenant policy.TenantID, version string) string {
+	return string(tenant) + "\x00" + version
+}
+
+func (s *policyVersionStore) Record(_ context.Context, v *store.PolicyVersion) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.policyVersions == nil {
+		s.policyVersions = map[string]*store.PolicyVersion{}
+	}
+
+	key := s.key(v.TenantID, v.Version)
+	now := time.Now().UTC()
+
+	// First sighting kept, last sighting updated. Overwriting the first would
+	// lose when a rule change took effect, which is the half an auditor asks
+	// about.
+	if existing, seen := s.policyVersions[key]; seen {
+		existing.LastLoadedAt = now
+
+		return nil
+	}
+
+	stored := *v
+	stored.FirstLoadedAt, stored.LastLoadedAt = now, now
+
+	s.policyVersions[key] = &stored
+
+	return nil
+}
+
+func (s *policyVersionStore) Attach(_ context.Context, tenant policy.TenantID, version, ref, commit string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	existing, seen := s.policyVersions[s.key(tenant, version)]
+	if !seen {
+		return store.ErrNotFound
+	}
+
+	existing.Ref, existing.Commit = ref, commit
+
+	return nil
+}
+
+func (s *policyVersionStore) List(_ context.Context, tenant policy.TenantID, limit int) ([]*store.PolicyVersion, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if limit <= 0 {
+		limit = 50
+	}
+
+	var out []*store.PolicyVersion
+
+	for _, v := range s.policyVersions {
+		if v.TenantID != tenant {
+			continue
+		}
+
+		copied := *v
+		out = append(out, &copied)
+	}
+
+	sort.Slice(out, func(i, j int) bool {
+		if !out[i].FirstLoadedAt.Equal(out[j].FirstLoadedAt) {
+			return out[i].FirstLoadedAt.After(out[j].FirstLoadedAt)
+		}
+
+		return out[i].Version > out[j].Version
+	})
+
+	if len(out) > limit {
+		out = out[:limit]
+	}
+
+	return out, nil
+}
+
+func (s *policyVersionStore) ByVersion(_ context.Context, tenant policy.TenantID, version string) (*store.PolicyVersion, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	existing, seen := s.policyVersions[s.key(tenant, version)]
+	if !seen {
+		return nil, store.ErrNotFound
+	}
+
+	copied := *existing
+
+	return &copied, nil
+}

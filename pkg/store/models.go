@@ -241,3 +241,33 @@ type AuditRecord struct {
 
 	Detail []byte
 }
+
+// PolicyVersion is one bundle this deployment has had in force.
+//
+// The version is the identity — a SHA-256 over the bundle's files, so it cannot
+// disagree with the rules it names. Everything else is context: when it was
+// first seen, when it was last seen, where it came from as far as the loader
+// could tell, and whatever provenance somebody attached afterwards.
+type PolicyVersion struct {
+	TenantID policy.TenantID
+
+	// Version is "sha256:…" as computed at load.
+	Version string
+
+	// FirstLoadedAt and LastLoadedAt bracket the period this bundle was in use.
+	//
+	// Both, because either alone answers half of the question an auditor asks.
+	// First says when a rule change took effect; last says whether it is still
+	// the rule change in effect.
+	FirstLoadedAt time.Time
+	LastLoadedAt  time.Time
+
+	// Source is where the loader read it from, as a sentence rather than a
+	// path: a directory on one host means nothing on another.
+	Source string
+
+	// Ref and Commit are attached afterwards by whatever published the bundle.
+	// Empty means nobody said, which is a normal state and not a broken one.
+	Ref    string
+	Commit string
+}

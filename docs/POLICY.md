@@ -374,3 +374,53 @@ identity of the rules — a decision from last month would appear to have come
 from a bundle nobody can reconstruct.
 
 The loader refuses that arrangement rather than producing it.
+
+---
+
+## 12. Which bundle was in force
+
+Every decision and every audit record carries a policy version — a SHA-256 over
+the bundle that produced it (section 1). That identifies the rules exactly.
+
+It does not, on its own, get you back to them. Given `sha256:a3f1…` out of a
+record six months old, the only route to the rules is to check out every commit
+of the policy repository and rehash until one matches. Theoretically fine, and
+nobody will do it — so this deployment writes down what it loaded.
+
+```
+nitctl policy versions [-tenant T] [-limit N]
+nitctl policy versions -version sha256:a3f1…
+```
+
+```
+VERSION                  IN FORCE FROM     LAST SEEN         COMMIT
+sha256:a3f1c02d5e9b4477  2026-03-14 09:22  2026-08-26 13:06  9c2b1f4e
+sha256:77b0e4419a1c6d02  2026-02-01 11:40  2026-03-14 09:21  4d81aa02
+```
+
+**Both ends of the window,** because either alone answers half of what an
+auditor asks. First says when a rule change took effect; last says whether it is
+still the change in effect.
+
+### The commit, and who knows it
+
+The server records the version and the moment. It does not know the commit: a
+bundle may arrive as a directory, over a `policy.Source`, or from somewhere with
+no git in it at all.
+
+So CI attaches it, after publishing:
+
+```bash
+nitctl policy record \
+  -version "$(nitctl policy show policy/ -version-only)" \
+  -ref "$GITHUB_REF" -commit "$GITHUB_SHA"
+```
+
+Attaching to a version this deployment has never loaded is refused rather than
+inserted — that pairing would be a claim about a bundle that never ran here.
+
+### What it makes true
+
+"Any past decision can be replayed against the exact rules that produced it" is
+a sentence this documentation has always contained. With the mapping recorded,
+it is also a sentence somebody can act on.

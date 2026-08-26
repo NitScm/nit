@@ -62,15 +62,16 @@ func NewWithPool(pool *pgxpool.Pool) *Store {
 // Pool exposes the underlying pool, for migrations and diagnostics.
 func (s *Store) Pool() *pgxpool.Pool { return s.pool }
 
-func (s *Store) Users() store.UserStore              { return &userStore{s.pool} }
-func (s *Store) Sessions() store.SessionStore        { return &sessionStore{s.pool} }
-func (s *Store) Workspaces() store.WorkspaceStore    { return &workspaceStore{s.pool} }
-func (s *Store) Repositories() store.RepositoryStore { return &repositoryStore{s.pool} }
-func (s *Store) SyncPoints() store.SyncPointStore    { return &syncPointStore{s.pool} }
-func (s *Store) Tasks() store.TaskStore              { return &taskStore{s.pool} }
-func (s *Store) Artifacts() store.ArtifactStore      { return &artifactStore{s.pool} }
-func (s *Store) Audit() store.AuditStore             { return &auditStore{s.pool} }
-func (s *Store) Tenants() store.TenantStore          { return &tenantStore{s.pool} }
+func (s *Store) Users() store.UserStore                   { return &userStore{s.pool} }
+func (s *Store) Sessions() store.SessionStore             { return &sessionStore{s.pool} }
+func (s *Store) Workspaces() store.WorkspaceStore         { return &workspaceStore{s.pool} }
+func (s *Store) Repositories() store.RepositoryStore      { return &repositoryStore{s.pool} }
+func (s *Store) SyncPoints() store.SyncPointStore         { return &syncPointStore{s.pool} }
+func (s *Store) Tasks() store.TaskStore                   { return &taskStore{s.pool} }
+func (s *Store) Artifacts() store.ArtifactStore           { return &artifactStore{s.pool} }
+func (s *Store) Audit() store.AuditStore                  { return &auditStore{s.pool} }
+func (s *Store) Tenants() store.TenantStore               { return &tenantStore{s.pool} }
+func (s *Store) PolicyVersions() store.PolicyVersionStore { return &policyVersionStore{s.pool} }
 
 // Close releases the pool.
 func (s *Store) Close() error {

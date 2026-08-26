@@ -50,6 +50,16 @@ func Run(t *testing.T, newStore Factory) {
 	t.Run("ConcurrentDrain", func(t *testing.T) { testConcurrentDrain(t, newStore) })
 	t.Run("CompletionCannotPrecedeStart", func(t *testing.T) { testCompletionCannotPrecedeStart(t, newStore) })
 	t.Run("Sessions", func(t *testing.T) { testSessions(t, newStore) })
+
+	// Which bundles have been in force. See policyversions.go: the point is
+	// that a version in a six-month-old audit record resolves back to the
+	// rules, and a backend that lost the first sighting would answer that
+	// question wrongly rather than not at all.
+	t.Run("PolicyVersionsRecordAndResolve", func(t *testing.T) { testPolicyVersionsRecordAndResolve(t, newStore) })
+	t.Run("PolicyVersionsKeepTheFirstSighting", func(t *testing.T) { testPolicyVersionsKeepTheFirstSighting(t, newStore) })
+	t.Run("PolicyVersionsAttachProvenance", func(t *testing.T) { testPolicyVersionsAttachProvenance(t, newStore) })
+	t.Run("PolicyVersionsAreScopedToATenant", func(t *testing.T) { testPolicyVersionsAreScopedToATenant(t, newStore) })
+	t.Run("PolicyVersionsListNewestFirst", func(t *testing.T) { testPolicyVersionsListNewestFirst(t, newStore) })
 	t.Run("ABranchIsFreedByEveryExitFromRunning", func(t *testing.T) {
 		testBranchIsFreedOnEveryExit(t, newStore)
 	})

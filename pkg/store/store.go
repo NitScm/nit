@@ -43,6 +43,7 @@ type Store interface {
 	Artifacts() ArtifactStore
 	Audit() AuditStore
 	Tenants() TenantStore
+	PolicyVersions() PolicyVersionStore
 
 	// Close releases the underlying resources.
 	Close() error
@@ -280,6 +281,51 @@ type TenantStore interface {
 
 	// SetAdminGroups replaces the list for a tenant.
 	SetAdminGroups(ctx context.Context, tenant policy.TenantID, groups []policy.GroupID) error
+}
+
+// PolicyVersionStore remembers which bundles have been in force.
+//
+// # Why a version alone is not enough
+//
+// Every decision and every audit record carries a policy version — a SHA-256
+// over the bundle that produced it. That identifies the rules exactly and is
+// what makes "replay this decision against the rules that made it" a coherent
+// sentence.
+//
+// It is not enough to make it a possible one. Given `sha256:a3f1…` from an
+// audit record six months old, the only way back to the rules is to check out
+// every commit of the policy repository and rehash until one matches. That is
+// theoretically fine and practically nobody will do it — and for an audit
+// product, a claim nobody can execute is a claim better not made.
+//
+// So the deployment writes down what it loaded, when. The mapping is the thing
+// that was missing, not the identifier.
+//
+// # Why the server records and CI attaches
+//
+// A running deployment knows the version and the moment. It does not know the
+// commit: the bundle may have arrived as a directory, over a seam, from
+// somewhere with no git in it at all. So Record is what the loader does on
+// every load, and Attach is what CI does afterwards when it knows the
+// provenance — two facts from the two places that hold them.
+type PolicyVersionStore interface {
+	// Record notes that a bundle is in force. Called on every load, including
+	// reloads of a version already seen: the first sighting is kept and the
+	// last is updated, so the table says both when a version first appeared
+	// and whether it is still in use.
+	Record(ctx context.Context, v *PolicyVersion) error
+
+	// Attach adds provenance to a version already recorded, for CI to call
+	// once it knows which commit produced the hash. It is an error for a
+	// version nothing has loaded — that pairing would be a claim about a bundle
+	// this deployment has never seen.
+	Attach(ctx context.Context, tenant policy.TenantID, version, ref, commit string) error
+
+	// List returns versions newest first.
+	List(ctx context.Context, tenant policy.TenantID, limit int) ([]*PolicyVersion, error)
+
+	// ByVersion resolves one, which is the whole point.
+	ByVersion(ctx context.Context, tenant policy.TenantID, version string) (*PolicyVersion, error)
 }
 
 // AuditStore appends to the audit log.

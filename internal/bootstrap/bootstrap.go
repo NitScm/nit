@@ -30,6 +30,24 @@ import (
 // and authentication fails with "not in the policy bundle". Revocation is
 // immediate, only the history survives.
 func ReconcilePolicy(ctx context.Context, st store.Store, p *policy.Policy, tenant policy.TenantID) error {
+	// Which bundle this is, written down before anything is reconciled from it.
+	//
+	// Every decision already carries this version; what was missing is the way
+	// back from one. Given a hash out of a six-month-old audit record, the only
+	// route to the rules was to check out every commit of the policy repository
+	// and rehash until one matched — theoretically fine, and nobody will do it.
+	//
+	// Recorded here rather than in the loader because this runs on both the
+	// first load and every reload, and because it is the one place that already
+	// holds a store, a policy and a tenant.
+	if err := st.PolicyVersions().Record(ctx, &store.PolicyVersion{
+		TenantID: tenant,
+		Version:  p.Version(),
+		Source:   "policy bundle loaded by this deployment",
+	}); err != nil {
+		return fmt.Errorf("record the policy version: %w", err)
+	}
+
 	repos := make([]*store.Repository, 0, len(p.Repositories()))
 
 	for _, repo := range p.Repositories() {

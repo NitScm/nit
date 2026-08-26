@@ -79,15 +79,16 @@ func NewWithDB(db *sql.DB) *Store { return &Store{db: db} }
 // DB exposes the underlying handle, for migrations and diagnostics.
 func (s *Store) DB() *sql.DB { return s.db }
 
-func (s *Store) Users() store.UserStore              { return &userStore{s.db} }
-func (s *Store) Sessions() store.SessionStore        { return &sessionStore{s.db} }
-func (s *Store) Workspaces() store.WorkspaceStore    { return &workspaceStore{s.db} }
-func (s *Store) Repositories() store.RepositoryStore { return &repositoryStore{s.db} }
-func (s *Store) SyncPoints() store.SyncPointStore    { return &syncPointStore{s.db} }
-func (s *Store) Tasks() store.TaskStore              { return &taskStore{s.db} }
-func (s *Store) Artifacts() store.ArtifactStore      { return &artifactStore{s.db} }
-func (s *Store) Audit() store.AuditStore             { return &auditStore{s.db} }
-func (s *Store) Tenants() store.TenantStore          { return &tenantStore{s.db} }
+func (s *Store) Users() store.UserStore                   { return &userStore{s.db} }
+func (s *Store) Sessions() store.SessionStore             { return &sessionStore{s.db} }
+func (s *Store) Workspaces() store.WorkspaceStore         { return &workspaceStore{s.db} }
+func (s *Store) Repositories() store.RepositoryStore      { return &repositoryStore{s.db} }
+func (s *Store) SyncPoints() store.SyncPointStore         { return &syncPointStore{s.db} }
+func (s *Store) Tasks() store.TaskStore                   { return &taskStore{s.db} }
+func (s *Store) Artifacts() store.ArtifactStore           { return &artifactStore{s.db} }
+func (s *Store) Audit() store.AuditStore                  { return &auditStore{s.db} }
+func (s *Store) Tenants() store.TenantStore               { return &tenantStore{s.db} }
+func (s *Store) PolicyVersions() store.PolicyVersionStore { return &policyVersionStore{s.db} }
 
 // Close releases the handle.
 func (s *Store) Close() error { return s.db.Close() }

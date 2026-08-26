@@ -140,6 +140,10 @@ func run(args []string) error {
 		return policyDiff(args[2:])
 	case "test":
 		return policyTest(args[2:])
+	case "versions":
+		return policyVersions(args[2:])
+	case "record":
+		return policyRecord(args[2:])
 	case "show":
 		return policyShow(args[2:])
 	default:
