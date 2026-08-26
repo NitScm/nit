@@ -72,7 +72,7 @@ func policyDiff(args []string) error {
 			return err
 		}
 	} else {
-		report(diff, changes)
+		reportDiff(diff, changes)
 	}
 
 	if *exitCode && !diff.Empty() {
@@ -82,7 +82,7 @@ func policyDiff(args []string) error {
 	return nil
 }
 
-func report(diff policy.Diff, changes []policy.Change) {
+func reportDiff(diff policy.Diff, changes []policy.Change) {
 	if diff.Empty() {
 		fmt.Println("Nothing changed for anybody.")
 		fmt.Println()

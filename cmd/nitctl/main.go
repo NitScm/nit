@@ -138,6 +138,8 @@ func run(args []string) error {
 		return policyExplain(args[2:])
 	case "diff":
 		return policyDiff(args[2:])
+	case "test":
+		return policyTest(args[2:])
 	case "show":
 		return policyShow(args[2:])
 	default:

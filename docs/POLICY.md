@@ -292,3 +292,85 @@ path that mattered would be worse than no answer.
 For one path and one person, `nitctl policy explain` answers exactly. The two
 are for different moments: `explain` is for a question somebody already has,
 `diff` is for the change nobody thought to ask about.
+
+---
+
+## 11. Expectations
+
+`validate` says a bundle is well-formed. `diff` says what a change does to
+people. Neither protects a rule from being deleted: the bundle still compiles,
+every other rule still works, and nothing looks wrong until somebody reads
+something they should not have.
+
+```
+nitctl policy test <bundle-dir> <expectations-file> [-json] [-quiet]
+```
+
+```yaml
+- name: nobody outside security reads production secrets
+  repository: payments
+  path: config/secrets/prod.pem
+  actions: [read]
+  expect: deny
+  rule: no-secrets-outside-security
+  groups: [contractors, backend]
+
+- name: the backend team owns payments
+  repository: payments
+  path: payments/ledger.go
+  actions: [read, write]
+  expect: allow
+  groups: [backend]
+```
+
+Exit 1 on any failure. Strict decoding, as everywhere: a misspelled field is an
+error, because a test that silently defaults is worse than no test — nobody
+audits a green check.
+
+### `rule:`, and why a denial without it proves nothing
+
+**Everything is denied by default** (section 2). So `expect: deny` holds whether
+the deny rule is there or not, and a file of "nobody outside security reads
+secrets" assertions stays green after somebody deletes every deny in the bundle
+— which is exactly the change those assertions were written to catch.
+
+Naming the rule makes the assertion about the rule.
+
+Without it, the run still says so:
+
+```
+3 checks hold.
+
+1 held because everything is denied by default, not because of any rule:
+  nobody outside security reads production secrets: carol read payments:secrets/prod.pem
+
+These would still pass with every deny rule in the bundle deleted.
+Add `rule: <id>` to assert which rule is supposed to produce the denial.
+```
+
+That is a warning rather than a failure: asserting that the default holds is
+legitimate. A file where most assertions are hollow is not.
+
+### Groups rather than people
+
+An expectation over a group asserts something about the *rule*, and stays true
+as people join and leave. That is what you want: membership changes are `diff`'s
+job, and a test that broke on every hire would be deleted by the second month.
+
+Two things are errors rather than passes:
+
+- an expectation naming a user who is not in the bundle;
+- an expectation over a group with no members.
+
+Neither is a policy that broke. Both are a test that has stopped testing, and
+reporting either as a pass is how a file of assertions rots into decoration.
+
+### Where the file goes
+
+**Beside the bundle, never inside it.** The bundle's version is a SHA-256 over
+every YAML file in its directory, and that version is stamped on every decision
+and every audit record. A tests file inside would make editing a test change the
+identity of the rules — a decision from last month would appear to have come
+from a bundle nobody can reconstruct.
+
+The loader refuses that arrangement rather than producing it.
