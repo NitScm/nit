@@ -17,6 +17,11 @@ This document describes a set of rules and conventions maintainers use in this r
 
 * Commit messages must use a conventional commits prefix
 
+* **Never push. Committing is automatic; pushing is manual and belongs to the
+  maintainer.** Leave commits local and say what is ready to go. A push is
+  outward-facing and reverses badly — twice already this project has had to
+  rewrite published history.
+
 * Commit messages must include a `Change:` footer with an alphanumeric, dash-separated identifier
   * Example footer: `Change: flatten-invert-check`
 
