@@ -158,7 +158,7 @@ groups: frontend
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Components, layering, flows, concurrency, data model, build order |
 | [`docs/PROTOCOL.md`](docs/PROTOCOL.md) | Sync points, push and pull exchanges, errors, routes |
 | [`docs/POLICY.md`](docs/POLICY.md) | Rule language, patterns, actions, guards, invariants |
-| [`api/openapi.yaml`](api/openapi.yaml) | The HTTP API, also served at `/openapi.yaml` |
+| [`pkg/protocol/routes.go`](pkg/protocol/routes.go) | Every route this API serves, declared publicly |
 | [`deploy/README.md`](deploy/README.md) | Container images and Compose stacks, per forge |
 | [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md) | Every binary, every setting, deployment shapes |
 | [`docs/VALIDATION.md`](docs/VALIDATION.md) | Step-by-step walkthrough proving each property |

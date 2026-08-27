@@ -172,7 +172,6 @@ cat <<EOF
 
   API          http://localhost:${NIT_DEV_API_PORT:-8080}
   Console      http://localhost:${NIT_DEV_CONSOLE_PORT:-4200}
-  API spec     http://localhost:${NIT_DEV_API_PORT:-8080}/openapi.yaml
   Gitea        ${GITEA_URL}   (${GITEA_ADMIN_USER} / ${GITEA_ADMIN_PASSWORD})
 
   Three accounts, with deliberately different access:

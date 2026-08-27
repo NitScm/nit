@@ -4,8 +4,9 @@
 #   docker compose logs -f bootstrap      # prints the tokens to sign in with
 #
 # Everything is here: PostgreSQL, a Gitea acting as the forge, the control
-# plane, a worker, and the web console. The API description is served by nitd
-# itself at /openapi.yaml; no viewer is shipped here.
+# plane, a worker, and the web console. No API viewer is shipped here — the
+# route list is declared in pkg/protocol and the OpenAPI document is published
+# with the audit vault.
 # Nothing outside this file is needed and nothing survives `down -v`.
 #
 # The secrets below are fixed and public on purpose. This is a development

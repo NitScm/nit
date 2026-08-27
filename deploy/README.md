@@ -245,4 +245,3 @@ created before that was true.
 
 - `docs/CONFIGURATION.md` — every setting, its file key and its variable
 - `docs/VALIDATION.md` — a walkthrough that proves each property in turn
-- `api/openapi.yaml` — the API, also served at `/openapi.yaml`

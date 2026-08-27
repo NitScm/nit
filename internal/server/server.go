@@ -194,10 +194,8 @@ func (s *Server) buildRoutes() *http.ServeMux {
 		mux.Handle(pattern, handler)
 	}
 
-	// Unauthenticated: a load balancer has no token, and the API description is
-	// what a client reads before it has one.
+	// Unauthenticated: a load balancer has no token.
 	register("GET "+protocol.RouteHealthz, http.HandlerFunc(s.handleHealthz))
-	register("GET "+RouteOpenAPI, http.HandlerFunc(handleOpenAPI))
 
 	// Authenticated.
 	register("GET "+protocol.RouteWhoAmI, s.authenticated(s.handleWhoAmI))
@@ -218,11 +216,11 @@ func (s *Server) buildRoutes() *http.ServeMux {
 	// Operations API: read-only, restricted to the admin groups. Everything
 	// that changes authorization goes through the policy bundle, so that the
 	// reviewed path stays the only path.
-	register("GET /v1/admin/tasks", s.adminOnly(s.handleAdminTasks))
-	register("GET /v1/admin/tasks/{id}", s.adminOnly(s.handleAdminTask))
-	register("GET /v1/admin/audit", s.adminOnly(s.handleAdminAudit))
-	register("GET /v1/admin/stats", s.adminOnly(s.handleAdminStats))
-	register("GET /v1/admin/policy", s.adminOnly(s.handleAdminPolicy))
+	register("GET "+protocol.RouteAdminTasks, s.adminOnly(s.handleAdminTasks))
+	register("GET "+protocol.RouteAdminTasks+"/{id}", s.adminOnly(s.handleAdminTask))
+	register("GET "+protocol.RouteAdminAudit, s.adminOnly(s.handleAdminAudit))
+	register("GET "+protocol.RouteAdminStats, s.adminOnly(s.handleAdminStats))
+	register("GET "+protocol.RouteAdminPolicy, s.adminOnly(s.handleAdminPolicy))
 
 	return mux
 }
