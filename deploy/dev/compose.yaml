@@ -4,7 +4,8 @@
 #   docker compose logs -f bootstrap      # prints the tokens to sign in with
 #
 # Everything is here: PostgreSQL, a Gitea acting as the forge, the control
-# plane, a worker, the API description behind Swagger UI, and the web console.
+# plane, a worker, and the web console. The API description is served by nitd
+# itself at /openapi.yaml; no viewer is shipped here.
 # Nothing outside this file is needed and nothing survives `down -v`.
 #
 # The secrets below are fixed and public on purpose. This is a development
@@ -207,10 +208,10 @@ services:
       NIT_BLOB_DIR: /var/lib/nit/blobs
       NIT_SYNC_KEY: development-only-signing-key-32-bytes
       NIT_ADMIN_GROUPS: platform
-      # The console and Swagger UI run on their own ports, so they are separate
-      # origins and need naming. In production both are served from the same
-      # host as the API and this is empty.
-      NIT_CORS_ORIGINS: "http://localhost:${NIT_DEV_CONSOLE_PORT:-4200},http://localhost:${NIT_DEV_SWAGGER_PORT:-8081}"
+      # The console runs on its own port, so it is a separate origin and has
+      # to be named. In production it is served from the same host as the API
+      # and this is empty.
+      NIT_CORS_ORIGINS: "http://localhost:${NIT_DEV_CONSOLE_PORT:-4200}"
       NIT_LOG_LEVEL: "${NIT_DEV_LOG_LEVEL:-info}"
     volumes:
       - shared:/var/lib/nit
@@ -264,18 +265,16 @@ services:
     ports:
       - "${NIT_DEV_CONSOLE_PORT:-4200}:80"
 
-  swagger:
-    image: swaggerapi/swagger-ui:latest
-    environment:
-      # Read from the running server, not from a copy: what you see is what that
-      # binary actually serves.
-      URLS: '[{"url":"http://localhost:${NIT_DEV_API_PORT:-8080}/openapi.yaml","name":"nit API"}]'
-      DEEP_LINKING: "true"
-    depends_on:
-      nitd:
-        condition: service_healthy
-    ports:
-      - "${NIT_DEV_SWAGGER_PORT:-8081}:8080"
+  # There is no Swagger UI here.
+  #
+  # The description is still served, by nitd, at /openapi.yaml — it is embedded
+  # in the binary and always describes the API that binary implements. Point
+  # anything at it: a browser, a generator, or your own Swagger.
+  #
+  # What is not here is the *viewer*, which pulls a third-party image on every
+  # `compose up` of the free edition. This stack is what somebody runs to
+  # evaluate an authorization product, and one fewer image from somebody else is
+  # one fewer thing they have to take on trust.
 
 volumes:
   postgres:

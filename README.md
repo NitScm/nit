@@ -81,7 +81,7 @@ testable without a database, a network, or even git.
 ## Try it
 
 The fastest path is the development stack — PostgreSQL, a Gitea forge, nit, the
-web console and Swagger UI, with a seeded repository and three accounts whose
+web console, with a seeded repository and three accounts whose
 access deliberately differs:
 
 ```sh
