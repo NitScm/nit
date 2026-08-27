@@ -11,6 +11,10 @@ This document describes a set of rules and conventions maintainers use in this r
 * The `Assisted-By:` footer must reference the actual model used, not a generic name
   * Example footer: `Assisted-By: anthropic/claude-opus-5`
 
+* Never put a `Claude-Session:` footer, or any `claude.ai/code/session_…` URL, in
+  a commit message. History has been rewritten twice to remove these; do not
+  reintroduce them.
+
 * Commit messages must use a conventional commits prefix
 
 * Commit messages must include a `Change:` footer with an alphanumeric, dash-separated identifier
