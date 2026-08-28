@@ -4,8 +4,8 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/NitScm/nit/internal/auth"
 	"github.com/NitScm/nit/pkg/policy"
+	"github.com/NitScm/nit/pkg/store"
 )
 
 // tenantOf returns whose data this request may touch.
@@ -15,25 +15,33 @@ import (
 // serves one customer, which is right for a self-hosted deployment and the
 // thing a hosted control plane cannot do.
 //
-// # Why it falls back to the default rather than failing
+// # One source of truth, and no fallback
 //
-// Every route that reaches this is authenticated, so a nil principal is a
-// routing mistake rather than an unauthenticated caller. Returning the default
-// tenant is what a single-tenant deployment expects and what every one of them
-// runs with today.
+// It reads the tenant the *store* reads — the one `serve` put in the context
+// beside the principal — rather than deriving it a second time from the
+// principal itself. The two are set together in one place and cannot be set
+// apart, so asking twice bought nothing and cost the possibility of
+// disagreeing.
 //
-// **That fallback stops being safe the day a deployment has a second tenant**,
-// because it turns "the principal is missing" into "read the first tenant's
-// data". It is the reason gap 1 in saas-thinking/03 is not finished by this
-// function: the remaining work is to make an absent principal impossible to
-// reach here, and PostgreSQL row-level security is the second layer that makes
-// forgetting a failed query rather than a cross-tenant read.
+// It used to fall back to the default tenant when no principal was present, on
+// the reasoning that every route reaching here is authenticated so an absent
+// principal is a routing mistake. That was true and the fallback was still
+// wrong: it turned "the principal is missing" into "read the first tenant's
+// data", which is correct-looking in the single-tenant deployment everybody
+// runs today and a cross-tenant read on the first day there are two.
+//
+// Now an absent principal yields the empty tenant, and the empty tenant matches
+// nothing: PostgreSQL stamps it on the connection and row-level security
+// returns no rows, MySQL puts it in the WHERE clause and it matches none. A
+// routing mistake becomes an empty result somebody reports rather than a
+// disclosure nobody notices.
+//
+// Removing it also closed a way for the two layers to disagree. This function
+// could answer "default" while the connection was stamped with the empty
+// string, producing a query asking for one tenant's rows over a connection
+// permitted to read none — an empty result with a confusing cause.
 func tenantOf(ctx context.Context) policy.TenantID {
-	if principal := auth.PrincipalFrom(ctx); principal != nil && principal.Tenant != "" {
-		return principal.Tenant
-	}
-
-	return policy.DefaultTenant
+	return store.TenantFrom(ctx)
 }
 
 // policyFor returns the bundle in force for this request's tenant.
