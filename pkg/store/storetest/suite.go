@@ -1106,8 +1106,32 @@ func testConcurrentDrain(t *testing.T, newStore Factory) {
 
 				mu.Lock()
 				if held, busy := running[task.PartitionKey]; busy {
-					t.Errorf("partition %q handed to two workers at once: %s and %s",
-						task.PartitionKey, held, task.ID)
+					// This map is a hint; the store is the authority.
+					//
+					// Complete frees the partition in the store, and this map
+					// only catches up afterwards, so between the two there is an
+					// interval where a perfectly legal claim finds the previous
+					// holder still recorded here. Reporting that as a violation
+					// blamed the store for a lag in the model of it —
+					// intermittently, on whichever backend claims fast enough to
+					// land inside the interval.
+					//
+					// ⚠️ Do not fix it by releasing earlier or by holding this
+					// lock across Complete. Both close the false positive by
+					// closing the case: with partition exclusion deliberately
+					// removed from the in-memory store, the original ordering
+					// caught it 5 times in 8, releasing early caught it 0 in 10,
+					// and holding the lock across Complete caught it 1 in 10 —
+					// because serialising the completions removes the contention
+					// the case exists to create.
+					//
+					// Asking the store keeps both. A holder that has finished is
+					// this map lagging; a holder still running is the violation.
+					if other, err := f.store.Tasks().ByID(ctx, held); err == nil &&
+						other.State == protocol.TaskRunning {
+						t.Errorf("partition %q handed to two workers at once: %s and %s",
+							task.PartitionKey, held, task.ID)
+					}
 				}
 				running[task.PartitionKey] = task.ID
 				claims[task.ID]++
